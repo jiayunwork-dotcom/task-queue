@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tq-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-task_queue}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d task_queue"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tq-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: tq-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tq-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tq-backend
+    environment:
+      TQ_POSTGRES_HOST: postgres
+      TQ_POSTGRES_PORT: 5432
+      TQ_POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      TQ_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      TQ_POSTGRES_DBNAME: ${POSTGRES_DB:-task_queue}
+      TQ_POSTGRES_SSLMODE: disable
+      TQ_POSTGRES_POOL_SIZE: 50
+      TQ_REDIS_HOST: redis
+      TQ_REDIS_PORT: 6379
+      TQ_REDIS_DB: 0
+      TQ_REDIS_POOL_SIZE: 200
+      TQ_SERVER_PORT: 8080
+      TQ_SERVER_MODE: release
+      TQ_QUEUE_FAIRNESS_N: 10
+      TQ_QUEUE_DELAY_SCAN_INTERVAL: 1
+      TQ_QUEUE_LEASE_TTL: 30
+      TQ_WORKER_DEFAULT_SLOTS: 20
+      TQ_WORKER_HEARTBEAT_INTERVAL: 5
+      TQ_WORKER_HEARTBEAT_TIMEOUT: 15
+      TQ_SCHEDULER_DISPATCH_INTERVAL: 10
+      TQ_SCHEDULER_BATCH_SIZE: 200
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tq-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        API_BASE_URL: http://backend:8080/api/v1
+    container_name: tq-frontend
+    environment:
+      - API_BASE_URL=http://backend:8080/api/v1
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - tq-network
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  tq-network:
+    driver: bridge

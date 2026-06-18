@@ -1,0 +1,42 @@
+server:
+  port: 8080
+  grpc_port: 50051
+  read_timeout: 30
+  write_timeout: 30
+  mode: release
+
+postgres:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: task_queue
+  sslmode: disable
+  pool_size: 50
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 100
+  dial_timeout: 5
+  read_timeout: 3
+  write_timeout: 3
+
+queue:
+  priority_levels: 5
+  fairness_n: 10
+  delay_scan_interval: 1
+  lease_ttl: 30
+  max_retries: 5
+
+worker:
+  default_slots: 10
+  heartbeat_interval: 5
+  heartbeat_timeout: 15
+  graceful_shutdown_timeout: 300
+
+scheduler:
+  dispatch_interval: 10
+  batch_size: 100
