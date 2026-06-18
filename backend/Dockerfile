@@ -6,7 +6,7 @@ RUN apk add --no-cache git
 
 ENV GOPROXY=https://goproxy.cn,direct
 
-COPY go.mod ./
+COPY go.mod go.sum* ./
 
 COPY . .
 
@@ -20,7 +20,6 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /task-queue /app/task-queue
-COPY --from=builder /app/config /app/config
 
 EXPOSE 8080
 EXPOSE 50051

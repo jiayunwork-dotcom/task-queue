@@ -17,7 +17,7 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     public: {
-      apiBase: process.env.API_BASE_URL || 'http://localhost:8080/api/v1'
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || '/api/v1'
     }
   },
   colorMode: {
@@ -26,10 +26,5 @@ export default defineNuxtConfig({
   ui: {
     primary: 'blue',
     gray: 'slate'
-  },
-  nitro: {
-    routeRules: {
-      '/api/**': { proxy: { to: process.env.API_BASE_URL || 'http://localhost:8080/api/v1' } }
-    }
   }
 })

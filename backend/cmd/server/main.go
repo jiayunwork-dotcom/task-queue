@@ -32,6 +32,9 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	log.Printf("config loaded: postgres=%s:%d redis=%s:%d server_port=%d",
+		cfg.Postgres.Host, cfg.Postgres.Port, cfg.Redis.Host, cfg.Redis.Port, cfg.Server.Port)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

@@ -2,17 +2,19 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Postgres PostgresConfig `mapstructure:"postgres"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	Queue    QueueConfig    `mapstructure:"queue"`
-	Worker   WorkerConfig   `mapstructure:"worker"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Postgres  PostgresConfig  `mapstructure:"postgres"`
+	Redis     RedisConfig     `mapstructure:"redis"`
+	Queue     QueueConfig     `mapstructure:"queue"`
+	Worker    WorkerConfig    `mapstructure:"worker"`
 	Scheduler SchedulerConfig `mapstructure:"scheduler"`
 }
 
@@ -46,18 +48,18 @@ type RedisConfig struct {
 }
 
 type QueueConfig struct {
-	PriorityLevels   int `mapstructure:"priority_levels"`
-	FairnessN        int `mapstructure:"fairness_n"`
+	PriorityLevels    int `mapstructure:"priority_levels"`
+	FairnessN         int `mapstructure:"fairness_n"`
 	DelayScanInterval int `mapstructure:"delay_scan_interval"`
-	LeaseTTL         int `mapstructure:"lease_ttl"`
-	MaxRetries       int `mapstructure:"max_retries"`
+	LeaseTTL          int `mapstructure:"lease_ttl"`
+	MaxRetries        int `mapstructure:"max_retries"`
 }
 
 type WorkerConfig struct {
-	DefaultSlots     int `mapstructure:"default_slots"`
-	HeartbeatInterval int `mapstructure:"heartbeat_interval"`
-	HeartbeatTimeout int `mapstructure:"heartbeat_timeout"`
-	GracefulShutdownTimeout int `mapstructure:"graceful_shutdown_timeout"`
+	DefaultSlots             int `mapstructure:"default_slots"`
+	HeartbeatInterval        int `mapstructure:"heartbeat_interval"`
+	HeartbeatTimeout         int `mapstructure:"heartbeat_timeout"`
+	GracefulShutdownTimeout  int `mapstructure:"graceful_shutdown_timeout"`
 }
 
 type SchedulerConfig struct {
@@ -109,13 +111,30 @@ func Load() (*Config, error) {
 	viper.SetDefault("scheduler.dispatch_interval", 10)
 	viper.SetDefault("scheduler.batch_size", 100)
 
-	viper.AutomaticEnv()
-	viper.SetEnvPrefix("TQ")
-
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("read config error: %w", err)
 		}
+	}
+
+	viper.SetEnvPrefix("TQ")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	envBindings := []string{
+		"server.port", "server.grpc_port", "server.read_timeout", "server.write_timeout", "server.mode",
+		"postgres.host", "postgres.port", "postgres.user", "postgres.password",
+		"postgres.dbname", "postgres.sslmode", "postgres.pool_size",
+		"redis.host", "redis.port", "redis.password", "redis.db",
+		"redis.pool_size", "redis.dial_timeout", "redis.read_timeout", "redis.write_timeout",
+		"queue.priority_levels", "queue.fairness_n", "queue.delay_scan_interval",
+		"queue.lease_ttl", "queue.max_retries",
+		"worker.default_slots", "worker.heartbeat_interval", "worker.heartbeat_timeout",
+		"worker.graceful_shutdown_timeout",
+		"scheduler.dispatch_interval", "scheduler.batch_size",
+	}
+	for _, key := range envBindings {
+		_ = viper.BindEnv(key)
 	}
 
 	var cfg Config
@@ -123,7 +142,48 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
 
+	applyDirectEnvOverrides(&cfg)
+
 	return &cfg, nil
+}
+
+func applyDirectEnvOverrides(cfg *Config) {
+	if v := os.Getenv("TQ_POSTGRES_HOST"); v != "" {
+		cfg.Postgres.Host = v
+	}
+	if v := os.Getenv("TQ_POSTGRES_PORT"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Postgres.Port)
+	}
+	if v := os.Getenv("TQ_POSTGRES_USER"); v != "" {
+		cfg.Postgres.User = v
+	}
+	if v := os.Getenv("TQ_POSTGRES_PASSWORD"); v != "" {
+		cfg.Postgres.Password = v
+	}
+	if v := os.Getenv("TQ_POSTGRES_DBNAME"); v != "" {
+		cfg.Postgres.DBName = v
+	}
+	if v := os.Getenv("TQ_POSTGRES_SSLMODE"); v != "" {
+		cfg.Postgres.SSLMode = v
+	}
+	if v := os.Getenv("TQ_POSTGRES_POOL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Postgres.PoolSize)
+	}
+	if v := os.Getenv("TQ_REDIS_HOST"); v != "" {
+		cfg.Redis.Host = v
+	}
+	if v := os.Getenv("TQ_REDIS_PORT"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Redis.Port)
+	}
+	if v := os.Getenv("TQ_REDIS_PASSWORD"); v != "" {
+		cfg.Redis.Password = v
+	}
+	if v := os.Getenv("TQ_REDIS_DB"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Redis.DB)
+	}
+	if v := os.Getenv("TQ_SERVER_PORT"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Server.Port)
+	}
 }
 
 func (c *PostgresConfig) DSN() string {
