@@ -15,6 +15,34 @@ const (
 	windowPrecision = 100 * time.Millisecond
 )
 
+var tryAcquireScript = redis.NewScript(`
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '0', ARGV[1])
+local count = redis.call('ZCARD', KEYS[1])
+if count >= tonumber(ARGV[2]) then
+    return 0
+end
+redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
+redis.call('PEXPIRE', KEYS[1], ARGV[5])
+return 1
+`)
+
+var releaseAndRecordScript = redis.NewScript(`
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '0', ARGV[1])
+local count = redis.call('ZCARD', KEYS[1])
+local maxAllowed = tonumber(ARGV[2])
+local available = maxAllowed - count
+if available <= 0 then
+    return 0
+end
+local numPairs = math.floor((#ARGV - 3) / 2)
+local n = math.min(available, numPairs)
+for i = 1, n do
+    redis.call('ZADD', KEYS[1], ARGV[2*i+1], ARGV[2*i+2])
+end
+redis.call('PEXPIRE', KEYS[1], ARGV[#ARGV])
+return n
+`)
+
 type RateLimiter struct {
 	cache      *cache.Cache
 	configMgr  *ConfigManager
@@ -77,48 +105,24 @@ func (rl *RateLimiter) checkAndRecord(ctx context.Context, taskType string, task
 	key := executionWindowKey(taskType)
 	score := float64(now.UnixNano()) / 1e6
 	member := fmt.Sprintf("%d:%s", now.UnixNano(), taskID.String())
-
-	pipe := rl.cache.Client.TxPipeline()
-
-	pipe.ZRemRangeByScore(ctx, key, "0", fmt.Sprintf("%f", float64(windowStart.UnixNano())/1e6))
-	pipe.ZCard(ctx, key)
-
-	results, err := pipe.Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("redis pipeline exec: %w", err)
-	}
-
-	if len(results) < 2 {
-		return false, fmt.Errorf("unexpected pipeline result length")
-	}
-
-	zcardCmd, ok := results[1].(*redis.IntCmd)
-	if !ok {
-		return false, fmt.Errorf("unexpected zcard result type")
-	}
-
-	count, err := zcardCmd.Result()
-	if err != nil {
-		return false, fmt.Errorf("zcard result: %w", err)
-	}
-
+	windowStartScore := float64(windowStart.UnixNano()) / 1e6
 	maxAllowed := int64(float64(cfg.MaxPerSecond) * float64(cfg.WindowSizeMs) / 1000.0)
-	if count >= maxAllowed {
-		return false, nil
-	}
+	ttlMs := int64(cfg.WindowSizeMs + 1000)
 
-	err = rl.cache.Client.ZAdd(ctx, key, redis.Z{
-		Score:  score,
-		Member: member,
-	}).Err()
+	result, err := tryAcquireScript.Run(ctx, rl.cache.Client,
+		[]string{key},
+		fmt.Sprintf("%f", windowStartScore),
+		maxAllowed,
+		fmt.Sprintf("%f", score),
+		member,
+		ttlMs,
+	).Int64()
+
 	if err != nil {
-		return false, fmt.Errorf("zadd execution record: %w", err)
+		return false, fmt.Errorf("lua tryAcquire: %w", err)
 	}
 
-	ttl := time.Duration(cfg.WindowSizeMs+1000) * time.Millisecond
-	rl.cache.Client.Expire(ctx, key, ttl)
-
-	return true, nil
+	return result == 1, nil
 }
 
 func (rl *RateLimiter) cleanupLoop(ctx context.Context) {
@@ -180,28 +184,46 @@ func (rl *RateLimiter) tryReleaseWaiting(ctx context.Context) {
 
 		windowStart := now.Add(-time.Duration(cfg.WindowSizeMs) * time.Millisecond)
 		key := executionWindowKey(taskType)
-
-		count, err := rl.cache.Client.ZCount(ctx, key,
-			fmt.Sprintf("%f", float64(windowStart.UnixNano())/1e6),
-			"+inf").Result()
-		if err != nil {
-			continue
-		}
-
+		windowStartScore := float64(windowStart.UnixNano()) / 1e6
 		maxAllowed := int64(float64(cfg.MaxPerSecond) * float64(cfg.WindowSizeMs) / 1000.0)
-		available := maxAllowed - count
-		if available <= 0 {
+
+		pending := rl.waiter.PeekCount(taskType)
+		if pending == 0 {
 			continue
 		}
 
-		toRelease := rl.waiter.Dequeue(taskType, int(available))
-		for _, taskID := range toRelease {
-			score := float64(now.UnixNano()) / 1e6
+		batchSize := pending
+		if batchSize > int(maxAllowed) {
+			batchSize = int(maxAllowed)
+		}
+
+		candidates := rl.waiter.Peek(taskType, batchSize)
+
+		var args []interface{}
+		args = append(args,
+			fmt.Sprintf("%f", windowStartScore),
+			maxAllowed,
+		)
+
+		for _, taskID := range candidates {
+			score := float64(now.UnixNano())/1e6 + float64(len(args))*0.0001
 			member := fmt.Sprintf("%d:%s", now.UnixNano(), taskID.String())
-			_ = rl.cache.Client.ZAdd(ctx, key, redis.Z{
-				Score:  score,
-				Member: member,
-			}).Err()
+			args = append(args, fmt.Sprintf("%f", score), member)
+		}
+
+		ttlMs := int64(cfg.WindowSizeMs + 1000)
+		args = append(args, ttlMs)
+
+		released, err := releaseAndRecordScript.Run(ctx, rl.cache.Client,
+			[]string{key}, args...,
+		).Int64()
+
+		if err != nil || released <= 0 {
+			continue
+		}
+
+		releasedIDs := rl.waiter.Dequeue(taskType, int(released))
+		for range releasedIDs {
 			rl.stats.RecordExecution(taskType, now)
 		}
 	}

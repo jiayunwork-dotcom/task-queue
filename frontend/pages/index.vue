@@ -166,19 +166,19 @@
             </NuxtLink>
           </div>
 
-          <div v-if="snapshot?.throttle_counts && Object.keys(snapshot.throttle_counts).length > 0" class="space-y-3">
+          <div v-if="throttleEntries.length > 0" class="space-y-3">
             <div
-              v-for="(count, taskType) in snapshot.throttle_counts"
-              :key="taskType"
+              v-for="entry in throttleEntries"
+              :key="entry.taskType"
               class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
             >
               <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
                   <Icon name="i-heroicons-gauge-high-16-solid" class="w-4 h-4 text-red-600" />
                 </div>
-                <code class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ taskType }}</code>
+                <code class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ entry.taskType }}</code>
               </div>
-              <span class="font-bold text-red-600 dark:text-red-400">{{ formatNumber(count as number) }}</span>
+              <span class="font-bold text-red-600 dark:text-red-400">{{ formatNumber(entry.count) }}</span>
             </div>
           </div>
 
@@ -305,15 +305,25 @@ const statCards = computed(() => [
   },
 ])
 
+const throttleEntries = computed(() => {
+  const counts = snapshot.value?.throttle_counts
+  if (!counts || typeof counts !== 'object') return []
+  return Object.entries(counts).map(([taskType, count]) => ({
+    taskType,
+    count: Number(count),
+  }))
+})
+
 function formatNumber(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return n.toString()
 }
 
-function formatDate(ts?: number): string {
+function formatDate(ts?: string | number): string {
   if (!ts) return 'N/A'
-  return new Date(ts * 1000).toLocaleString()
+  const d = new Date(ts)
+  return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString()
 }
 
 function depthPercent(key: string): number {

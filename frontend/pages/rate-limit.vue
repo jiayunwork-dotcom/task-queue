@@ -314,8 +314,8 @@ async function saveConfig() {
     }
 
     await setRateLimitConfig(taskType, {
-      max_per_second: configForm.value.max_per_second,
-      window_size_ms: configForm.value.window_size_ms,
+      max_per_second: Number(configForm.value.max_per_second),
+      window_size_ms: Number(configForm.value.window_size_ms),
       enabled: configForm.value.enabled,
     })
 

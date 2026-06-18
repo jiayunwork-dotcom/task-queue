@@ -134,6 +134,40 @@ func (wq *WaitQueue) GetAllWaitCounts() map[string]int {
 	return result
 }
 
+func (wq *WaitQueue) PeekCount(taskType string) int {
+	wq.mu.Lock()
+	defer wq.mu.Unlock()
+
+	if queue, ok := wq.queues[taskType]; ok {
+		return queue.Len()
+	}
+	return 0
+}
+
+func (wq *WaitQueue) Peek(taskType string, count int) []uuid.UUID {
+	wq.mu.Lock()
+	defer wq.mu.Unlock()
+
+	queue, ok := wq.queues[taskType]
+	if !ok || queue.Len() == 0 {
+		return nil
+	}
+
+	actualCount := count
+	if queue.Len() < count {
+		actualCount = queue.Len()
+	}
+
+	result := make([]uuid.UUID, 0, actualCount)
+	elem := queue.Front()
+	for i := 0; i < actualCount && elem != nil; i++ {
+		wt := elem.Value.(*waitingTask)
+		result = append(result, wt.taskID)
+		elem = elem.Next()
+	}
+	return result
+}
+
 func (wq *WaitQueue) ReleaseChan() <-chan uuid.UUID {
 	return wq.releaseCh
 }
