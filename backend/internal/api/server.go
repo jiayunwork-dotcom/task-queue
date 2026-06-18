@@ -15,26 +15,45 @@ import (
 	"task-queue/internal/metrics"
 	"task-queue/internal/models"
 	"task-queue/internal/queue"
+	"task-queue/internal/ratelimit"
 	"task-queue/internal/repository"
 	"task-queue/internal/retry"
 	"task-queue/internal/worker"
 )
 
+type RateLimitConfigManager interface {
+	GetConfig(taskType string) *ratelimit.RateLimitConfig
+	GetAllConfigs() map[string]*ratelimit.RateLimitConfig
+	SetConfig(ctx context.Context, cfg *ratelimit.RateLimitConfig) error
+	DeleteConfig(ctx context.Context, taskType string) error
+}
+
+type RateLimiter interface {
+	GetCurrentRate(ctx context.Context, taskType string) (float64, error)
+}
+
+type WaitQueueStats interface {
+	GetAllWaitCounts() map[string]int
+}
+
 type Server struct {
-	cfg          *config.Config
-	app          *fiber.App
-	taskRepo     *repository.TaskRepository
-	workerRepo   *repository.WorkerRepository
-	handlerRepo  *repository.HandlerRepository
-	deadRepo     *repository.DeadLetterRepository
-	dagRepo      *repository.DAGRepository
-	auditLog     *audit.Logger
-	scheduler    *queue.PriorityScheduler
-	delaySched   *queue.DelayScheduler
-	workerMgr    *worker.Manager
-	retryEngine  *retry.Engine
-	dagEngine    *retry.DAGEngine
-	metrics      *metrics.Collector
+	cfg                *config.Config
+	app                *fiber.App
+	taskRepo           *repository.TaskRepository
+	workerRepo         *repository.WorkerRepository
+	handlerRepo        *repository.HandlerRepository
+	deadRepo           *repository.DeadLetterRepository
+	dagRepo            *repository.DAGRepository
+	auditLog           *audit.Logger
+	scheduler          *queue.PriorityScheduler
+	delaySched         *queue.DelayScheduler
+	workerMgr          *worker.Manager
+	retryEngine        *retry.Engine
+	dagEngine          *retry.DAGEngine
+	metrics            *metrics.Collector
+	rateLimitConfigMgr RateLimitConfigManager
+	rateLimiter        RateLimiter
+	waitQueueStats     WaitQueueStats
 }
 
 func NewServer(
@@ -51,6 +70,9 @@ func NewServer(
 	retryEngine *retry.Engine,
 	dagEngine *retry.DAGEngine,
 	metricsColl *metrics.Collector,
+	rateLimitConfigMgr RateLimitConfigManager,
+	rateLimiter RateLimiter,
+	waitQueueStats WaitQueueStats,
 ) *Server {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
@@ -67,20 +89,23 @@ func NewServer(
 	app.Use(logger.New())
 
 	s := &Server{
-		cfg:         cfg,
-		app:         app,
-		taskRepo:    taskRepo,
-		workerRepo:  workerRepo,
-		handlerRepo: handlerRepo,
-		deadRepo:    deadRepo,
-		dagRepo:     dagRepo,
-		auditLog:    auditLog,
-		scheduler:   scheduler,
-		delaySched:  delaySched,
-		workerMgr:   workerMgr,
-		retryEngine: retryEngine,
-		dagEngine:   dagEngine,
-		metrics:     metricsColl,
+		cfg:                cfg,
+		app:                app,
+		taskRepo:           taskRepo,
+		workerRepo:         workerRepo,
+		handlerRepo:        handlerRepo,
+		deadRepo:           deadRepo,
+		dagRepo:            dagRepo,
+		auditLog:           auditLog,
+		scheduler:          scheduler,
+		delaySched:         delaySched,
+		workerMgr:          workerMgr,
+		retryEngine:        retryEngine,
+		dagEngine:          dagEngine,
+		metrics:            metricsColl,
+		rateLimitConfigMgr: rateLimitConfigMgr,
+		rateLimiter:        rateLimiter,
+		waitQueueStats:     waitQueueStats,
 	}
 
 	s.registerRoutes()
@@ -130,6 +155,14 @@ func (s *Server) registerRoutes() {
 	mon.Get("/snapshot", s.GetMetricsSnapshot)
 	mon.Get("/throughput-history", s.GetThroughputHistory)
 	mon.Get("/queue-depths", s.GetQueueDepths)
+
+	rl := api.Group("/rate-limit")
+	rl.Get("/configs", s.ListRateLimitConfigs)
+	rl.Get("/configs/:taskType", s.GetRateLimitConfig)
+	rl.Put("/configs/:taskType", s.SetRateLimitConfig)
+	rl.Delete("/configs/:taskType", s.DeleteRateLimitConfig)
+	rl.Get("/status", s.GetRateLimitStatus)
+	rl.Get("/throttle-stats", s.GetRateLimitThrottleStats)
 
 	s.app.Get("/health", s.HealthCheck)
 }
@@ -721,6 +754,149 @@ func (s *Server) HealthCheck(c *fiber.Ctx) error {
 		"status": "ok",
 		"time":   time.Now().Unix(),
 	})
+}
+
+type SetRateLimitConfigRequest struct {
+	MaxPerSecond int  `json:"max_per_second"`
+	WindowSizeMs int  `json:"window_size_ms"`
+	Enabled      bool `json:"enabled"`
+}
+
+func (s *Server) ListRateLimitConfigs(c *fiber.Ctx) error {
+	if s.rateLimitConfigMgr == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "rate limit not available"})
+	}
+	configs := s.rateLimitConfigMgr.GetAllConfigs()
+	return c.JSON(configs)
+}
+
+func (s *Server) GetRateLimitConfig(c *fiber.Ctx) error {
+	if s.rateLimitConfigMgr == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "rate limit not available"})
+	}
+	taskType := c.Params("taskType")
+	cfg := s.rateLimitConfigMgr.GetConfig(taskType)
+	if cfg == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "config not found"})
+	}
+	return c.JSON(cfg)
+}
+
+func (s *Server) SetRateLimitConfig(c *fiber.Ctx) error {
+	if s.rateLimitConfigMgr == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "rate limit not available"})
+	}
+	taskType := c.Params("taskType")
+	if taskType == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "task type is required"})
+	}
+
+	var req SetRateLimitConfigRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	cfg := &ratelimit.RateLimitConfig{
+		TaskType:     taskType,
+		MaxPerSecond: req.MaxPerSecond,
+		WindowSizeMs: req.WindowSizeMs,
+		Enabled:      req.Enabled,
+	}
+
+	if err := s.rateLimitConfigMgr.SetConfig(c.UserContext(), cfg); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	s.auditLog.Log("rate_limit_config", uuid.New(), "updated", audit.WithRemoteAddr(c.IP()),
+		audit.WithExtra(map[string]interface{}{
+			"task_type":      taskType,
+			"max_per_second": req.MaxPerSecond,
+			"window_size_ms": req.WindowSizeMs,
+			"enabled":        req.Enabled,
+		}))
+
+	return c.JSON(cfg)
+}
+
+func (s *Server) DeleteRateLimitConfig(c *fiber.Ctx) error {
+	if s.rateLimitConfigMgr == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "rate limit not available"})
+	}
+	taskType := c.Params("taskType")
+	if taskType == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "task type is required"})
+	}
+
+	if err := s.rateLimitConfigMgr.DeleteConfig(c.UserContext(), taskType); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	s.auditLog.Log("rate_limit_config", uuid.New(), "deleted", audit.WithRemoteAddr(c.IP()),
+		audit.WithExtra(map[string]interface{}{
+			"task_type": taskType,
+		}))
+
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+func (s *Server) GetRateLimitStatus(c *fiber.Ctx) error {
+	if s.rateLimitConfigMgr == nil || s.rateLimiter == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "rate limit not available"})
+	}
+
+	ctx := c.UserContext()
+	configs := s.rateLimitConfigMgr.GetAllConfigs()
+	waitCounts := make(map[string]int)
+	if s.waitQueueStats != nil {
+		waitCounts = s.waitQueueStats.GetAllWaitCounts()
+	}
+
+	statusList := make([]*models.RateLimitStatus, 0, len(configs))
+	for taskType, cfg := range configs {
+		currentRate, _ := s.rateLimiter.GetCurrentRate(ctx, taskType)
+		usagePercent := 0.0
+		if cfg.MaxPerSecond > 0 {
+			usagePercent = (currentRate / float64(cfg.MaxPerSecond)) * 100
+		}
+		status := &models.RateLimitStatus{
+			TaskType:      taskType,
+			CurrentRate:   currentRate,
+			MaxPerSecond:  cfg.MaxPerSecond,
+			WindowSizeMs:  cfg.WindowSizeMs,
+			UsagePercent:  usagePercent,
+			WaitQueueSize: waitCounts[taskType],
+			Enabled:       cfg.Enabled,
+		}
+		statusList = append(statusList, status)
+	}
+
+	return c.JSON(statusList)
+}
+
+func (s *Server) GetRateLimitThrottleStats(c *fiber.Ctx) error {
+	hours := c.QueryInt("hours", 1)
+	if hours <= 0 {
+		hours = 1
+	}
+	if hours > 24 {
+		hours = 24
+	}
+
+	stats, err := s.metrics.GetThrottleCounts(c.UserContext(), time.Duration(hours)*time.Hour)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	result := make([]*models.RateLimitThrottleStats, 0, len(stats))
+	for taskType, count := range stats {
+		result = append(result, &models.RateLimitThrottleStats{
+			TaskType:      taskType,
+			ThrottleCount: count,
+			WindowHours:   hours,
+		})
+	}
+
+	return c.JSON(result)
 }
 
 func toJSON(v interface{}) []byte {

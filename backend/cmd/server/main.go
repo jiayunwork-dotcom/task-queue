@@ -13,14 +13,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"task-queue/internal/audit"
 	"task-queue/internal/api"
+	"task-queue/internal/audit"
 	"task-queue/internal/cache"
 	"task-queue/internal/config"
 	"task-queue/internal/database"
 	"task-queue/internal/metrics"
 	"task-queue/internal/models"
 	"task-queue/internal/queue"
+	"task-queue/internal/ratelimit"
 	"task-queue/internal/repository"
 	"task-queue/internal/retry"
 	"task-queue/internal/worker"
@@ -93,7 +94,23 @@ func main() {
 		auditLogger.LogC(c, et, eid, a)
 	})
 
+	rateLimitConfigMgr := ratelimit.NewConfigManager(rdb)
+	if err := rateLimitConfigMgr.LoadAllConfigs(ctx); err != nil {
+		log.Printf("warning: failed to load rate limit configs: %v", err)
+	}
+	rateLimitConfigMgr.Start(ctx)
+
+	waitQueue := ratelimit.NewWaitQueue()
+	rateLimitStats := ratelimit.NewStatsCollector(rdb)
+	rateLimitStats.Start(ctx)
+
+	rateLimiter := ratelimit.NewRateLimiter(rdb, rateLimitConfigMgr, waitQueue, rateLimitStats)
+	rateLimiter.Start(ctx)
+
+	workerManager.SetRateLimiter(rateLimiter)
+
 	metricsColl := metrics.NewCollector(rdb, workerRepo, taskRepo, deadRepo, scheduler)
+	metricsColl.SetRateLimitStats(rateLimitStats)
 
 	retryEngine := retry.NewEngine(taskRepo, deadRepo, delayScheduler, scheduler)
 
@@ -130,7 +147,8 @@ func main() {
 
 	server := api.NewServer(
 		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo,
-		auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine, metricsColl)
+		auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine, metricsColl,
+		rateLimitConfigMgr, rateLimiter, waitQueue)
 
 	go registerInternalHandlers(cfg, handlerRepo, selfWorker)
 
@@ -161,6 +179,9 @@ func main() {
 	defer shutdownCancel()
 
 	reaper.Stop()
+	rateLimiter.Stop()
+	rateLimitStats.Stop()
+	rateLimitConfigMgr.Stop()
 	metricsColl.Stop()
 	workerManager.Stop(shutdownCtx)
 	scheduler.Stop()

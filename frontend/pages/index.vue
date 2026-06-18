@@ -112,47 +112,79 @@
         </div>
       </div>
 
-      <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-6">Success / Failure Rates</h3>
-        <div class="space-y-4">
-          <div
-            v-for="level in priorityLevels"
-            :key="`rate-${level.key}`"
-            class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
-          >
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-sm font-medium" :style="{ color: level.color }">{{ level.label }}</span>
-              <span class="text-xs text-gray-500">
-                {{ (snapshot?.success_rates?.[level.key] || 0).toFixed(1) }}%
-              </span>
+      <div class="space-y-6">
+        <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-6">Success / Failure Rates</h3>
+          <div class="space-y-4">
+            <div
+              v-for="level in priorityLevels"
+              :key="`rate-${level.key}`"
+              class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
+            >
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-medium" :style="{ color: level.color }">{{ level.label }}</span>
+                <span class="text-xs text-gray-500">
+                  {{ (snapshot?.success_rates?.[level.key] || 0).toFixed(1) }}%
+                </span>
+              </div>
+              <div class="h-2 flex rounded-full overflow-hidden bg-gray-200 dark:bg-gray-600">
+                <div
+                  class="h-full bg-green-500"
+                  :style="{ width: `${snapshot?.success_rates?.[level.key] || 0}%` }"
+                ></div>
+                <div
+                  class="h-full bg-red-500"
+                  :style="{ width: `${snapshot?.failure_rates?.[level.key] || 0}%`"
+                ></div>
+              </div>
             </div>
-            <div class="h-2 flex rounded-full overflow-hidden bg-gray-200 dark:bg-gray-600">
-              <div
-                class="h-full bg-green-500"
-                :style="{ width: `${snapshot?.success_rates?.[level.key] || 0}%` }"
-              ></div>
-              <div
-                class="h-full bg-red-500"
-                :style="{ width: `${snapshot?.failure_rates?.[level.key] || 0}%` }"
-              ></div>
+          </div>
+
+          <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <Icon name="i-heroicons-no-symbol-16-solid" class="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Dead Letters</p>
+                  <p class="text-xl font-bold text-red-600">{{ formatNumber(snapshot?.dead_letter_count || 0) }}</p>
+                </div>
+              </div>
+              <NuxtLink to="/dead-letter">
+                <UButton size="sm" variant="outline" color="red">Manage</UButton>
+              </NuxtLink>
             </div>
           </div>
         </div>
 
-        <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <Icon name="i-heroicons-no-symbol-16-solid" class="w-5 h-5 text-red-600" />
-              </div>
-              <div>
-                <p class="text-sm text-gray-500">Dead Letters</p>
-                <p class="text-xl font-bold text-red-600">{{ formatNumber(snapshot?.dead_letter_count || 0) }}</p>
-              </div>
-            </div>
-            <NuxtLink to="/dead-letter">
-              <UButton size="sm" variant="outline" color="red">Manage</UButton>
+        <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Rate Limit Triggers (1h)</h3>
+            <NuxtLink to="/rate-limit" class="text-sm text-blue-600 hover:underline">
+              Configure →
             </NuxtLink>
+          </div>
+
+          <div v-if="snapshot?.throttle_counts && Object.keys(snapshot.throttle_counts).length > 0" class="space-y-3">
+            <div
+              v-for="(count, taskType) in snapshot.throttle_counts"
+              :key="taskType"
+              class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <Icon name="i-heroicons-gauge-high-16-solid" class="w-4 h-4 text-red-600" />
+                </div>
+                <code class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ taskType }}</code>
+              </div>
+              <span class="font-bold text-red-600 dark:text-red-400">{{ formatNumber(count as number) }}</span>
+            </div>
+          </div>
+
+          <div v-else class="py-6 text-center text-gray-500">
+            <Icon name="i-heroicons-check-circle-16-solid" class="w-8 h-8 mx-auto mb-2 text-green-500" />
+            <p class="text-sm">No rate limit triggers</p>
           </div>
         </div>
       </div>
@@ -277,6 +309,11 @@ function formatNumber(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return n.toString()
+}
+
+function formatDate(ts?: number): string {
+  if (!ts) return 'N/A'
+  return new Date(ts * 1000).toLocaleString()
 }
 
 function depthPercent(key: string): number {

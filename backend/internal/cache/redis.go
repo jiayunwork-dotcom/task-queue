@@ -25,7 +25,13 @@ const (
 	KeyConsecutiveHighCount = "tq:consecutive_high"
 	KeyThroughputCounter    = "tq:throughput:counter"
 	KeyThroughputWindow     = "tq:throughput:window"
-	KeyLatencySamples       = "tq:latency:samples"
+	KeyLatencySamples     = "tq:latency:samples"
+
+	KeyPrefixRateLimitWindow   = "tq:ratelimit:window:"
+	KeyPrefixRateLimitConfig = "tq:ratelimit:config:"
+	KeyPrefixRateLimitThrottle = "tq:ratelimit:throttle:"
+
+	ChannelRateLimitConfig = "tq:ratelimit:config:channel"
 )
 
 func New(cfg *config.RedisConfig) (*Cache, error) {

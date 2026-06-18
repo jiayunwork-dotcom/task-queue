@@ -25,6 +25,7 @@ type Manager struct {
 	handlerRepo *repository.HandlerRepository
 	taskRepo    *repository.TaskRepository
 	auditLog    func(ctx context.Context, entityType string, entityID uuid.UUID, action string)
+	rateLimiter RateLimiter
 
 	runningTasks map[uuid.UUID]*RunningTask
 	slots        *semaphore.Weighted
@@ -40,6 +41,11 @@ type Manager struct {
 	retryCallback func(ctx context.Context, task *models.Task, err error, retryCount int)
 	deadCallback  func(ctx context.Context, task *models.Task, err string)
 	leaseTTL      time.Duration
+}
+
+type RateLimiter interface {
+	TryAcquire(ctx context.Context, taskType string, taskID uuid.UUID) (bool, error)
+	GetReleaseChan() <-chan uuid.UUID
 }
 
 type RunningTask struct {
@@ -75,6 +81,10 @@ func NewManager(
 		handlers:     make(map[string]string),
 		leaseTTL:     time.Duration(queueCfg.LeaseTTL) * time.Second,
 	}
+}
+
+func (m *Manager) SetRateLimiter(rl RateLimiter) {
+	m.rateLimiter = rl
 }
 
 func (m *Manager) SetAuditLogger(fn func(ctx context.Context, entityType string, entityID uuid.UUID, action string)) {
@@ -116,6 +126,11 @@ func (m *Manager) Start(ctx context.Context, dispatchCh <-chan queue.DispatchReq
 	if preemptCh != nil {
 		m.wg.Add(1)
 		go m.preemptionHandler(ctx, preemptCh)
+	}
+
+	if m.rateLimiter != nil {
+		m.wg.Add(1)
+		go m.rateLimitReleaseHandler(ctx)
 	}
 }
 
@@ -230,6 +245,61 @@ func (m *Manager) dispatchConsumer(ctx context.Context, dispatchCh <-chan queue.
 			if m.stopping {
 				continue
 			}
+
+			if m.rateLimiter != nil {
+				task, err := m.taskRepo.GetByID(ctx, req.TaskID)
+				if err != nil || task == nil {
+					continue
+				}
+				allowed, err := m.rateLimiter.TryAcquire(ctx, task.Type, req.TaskID)
+				if err != nil {
+					continue
+				}
+				if !allowed {
+					if m.auditLog != nil {
+						m.auditLog(ctx, "task", req.TaskID, "rate_limited")
+					}
+					continue
+				}
+			}
+
+			go m.processTask(ctx, req)
+		}
+	}
+}
+
+func (m *Manager) rateLimitReleaseHandler(ctx context.Context) {
+	defer m.wg.Done()
+	releaseCh := m.rateLimiter.GetReleaseChan()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.stopCh:
+			return
+		case taskID, ok := <-releaseCh:
+			if !ok {
+				return
+			}
+			if m.stopping {
+				continue
+			}
+
+			task, err := m.taskRepo.GetByID(ctx, taskID)
+			if err != nil || task == nil || task.Status != models.TaskStatusReady {
+				continue
+			}
+
+			req := queue.DispatchRequest{
+				TaskID:   taskID,
+				Priority: task.Priority,
+			}
+
+			if m.auditLog != nil {
+				m.auditLog(ctx, "task", taskID, "rate_limit_released")
+			}
+
 			go m.processTask(ctx, req)
 		}
 	}

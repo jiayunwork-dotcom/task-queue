@@ -104,6 +104,31 @@ export interface MetricsSnapshot {
   workers_offline: number
   workers_total: number
   timestamp: string
+  throttle_counts?: Record<string, number>
+}
+
+export interface RateLimitConfig {
+  task_type: string
+  max_per_second: number
+  window_size_ms: number
+  enabled: boolean
+  updated_at: number
+}
+
+export interface RateLimitStatus {
+  task_type: string
+  current_rate: number
+  max_per_second: number
+  window_size_ms: number
+  usage_percent: number
+  wait_queue_size: number
+  enabled: boolean
+}
+
+export interface RateLimitThrottleStats {
+  task_type: string
+  throttle_count: number
+  window_hours: number
 }
 
 const API_BASE = '/api/v1'
@@ -271,6 +296,41 @@ export function useThroughputHistory(hours = 24) {
 
 export function useQueueDepths() {
   return useApi<Record<string, number>>('/metrics/queue-depths')
+}
+
+export function useRateLimitConfigs() {
+  return useApi<Record<string, RateLimitConfig>>('/rate-limit/configs')
+}
+
+export function useRateLimitStatus() {
+  return useApi<RateLimitStatus[]>('/rate-limit/status')
+}
+
+export function useRateLimitThrottleStats(hours = 1) {
+  return useApi<RateLimitThrottleStats[]>('/rate-limit/throttle-stats', {
+    query: { hours },
+  })
+}
+
+export async function setRateLimitConfig(taskType: string, data: {
+  max_per_second: number
+  window_size_ms: number
+  enabled: boolean
+}) {
+  const config = useRuntimeConfig()
+  return await $fetch<RateLimitConfig>(`/rate-limit/configs/${taskType}`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'PUT',
+    body: data,
+  })
+}
+
+export async function deleteRateLimitConfig(taskType: string) {
+  const config = useRuntimeConfig()
+  return await $fetch(`/rate-limit/configs/${taskType}`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'DELETE',
+  })
 }
 
 export function priorityLabel(p: number): string {

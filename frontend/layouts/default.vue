@@ -98,6 +98,7 @@ const navItems = computed<NavItem[]>(() => [
   { to: '/dead-letter', label: 'Dead Letter', icon: 'i-heroicons-no-symbol-20-solid', badge: deadLetterCount.value || undefined, badgeColor: 'red' },
   { to: '/dags', label: 'DAG Editor', icon: 'i-heroicons-swatch-20-solid' },
   { to: '/workers', label: 'Workers', icon: 'i-heroicons-server-stack-20-solid' },
+  { to: '/rate-limit', label: 'Rate Limiting', icon: 'i-heroicons-gauge-20-solid' },
 ])
 
 const pageTitles: Record<string, { title: string; subtitle: string }> = {
@@ -106,6 +107,7 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
   '/dead-letter': { title: 'Dead Letter Queue', subtitle: 'Inspect and recover failed tasks' },
   '/dags': { title: 'DAG Orchestration', subtitle: 'Design and run task dependency graphs' },
   '/workers': { title: 'Worker Cluster', subtitle: 'Monitor and manage worker nodes' },
+  '/rate-limit': { title: 'Rate Limiting', subtitle: 'Configure and monitor task execution rate limits' },
 }
 
 const pageTitle = computed(() => pageTitles[route.path]?.title || 'Task Queue')

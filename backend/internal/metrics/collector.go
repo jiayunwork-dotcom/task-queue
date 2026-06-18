@@ -15,12 +15,17 @@ import (
 	"task-queue/internal/repository"
 )
 
+type RateLimitStats interface {
+	GetThrottleCounts(ctx context.Context, window time.Duration) (map[string]int64, error)
+}
+
 type Collector struct {
 	cache        *cache.Cache
 	workerRepo   *repository.WorkerRepository
 	taskRepo     *repository.TaskRepository
 	deadRepo     *repository.DeadLetterRepository
 	scheduler    *queue.PriorityScheduler
+	rateLimitStats RateLimitStats
 
 	completedCount   int64
 	failedCount      int64
@@ -55,6 +60,10 @@ func NewCollector(
 		priorityFail:    make(map[models.Priority]int64),
 		stopCh:        make(chan struct{}),
 	}
+}
+
+func (c *Collector) SetRateLimitStats(rls RateLimitStats) {
+	c.rateLimitStats = rls
 }
 
 func (c *Collector) RecordTaskComplete(priority models.Priority, durationMS int64, success bool) {
@@ -181,6 +190,11 @@ func (c *Collector) Snapshot(ctx context.Context) *models.MetricsSnapshot {
 
 	deadCount, _ := c.deadRepo.Count(ctx)
 
+	var throttleCounts map[string]int64
+	if c.rateLimitStats != nil {
+		throttleCounts, _ = c.rateLimitStats.GetThrottleCounts(ctx, 1*time.Hour)
+	}
+
 	return &models.MetricsSnapshot{
 		QueueDepths:       depths,
 		Throughput:        throughput,
@@ -193,6 +207,7 @@ func (c *Collector) Snapshot(ctx context.Context) *models.MetricsSnapshot {
 		WorkersOffline:    workersOffline,
 		WorkersTotal:      workersOnline + workersOffline,
 		Timestamp:         time.Now(),
+		ThrottleCounts:    throttleCounts,
 	}
 }
 
@@ -254,6 +269,13 @@ func (c *Collector) GetThroughputHistory(ctx context.Context, hours int) (map[in
 		}
 	}
 	return history, nil
+}
+
+func (c *Collector) GetThrottleCounts(ctx context.Context, window time.Duration) (map[string]int64, error) {
+	if c.rateLimitStats != nil {
+		return c.rateLimitStats.GetThrottleCounts(ctx, window)
+	}
+	return make(map[string]int64), nil
 }
 
 func mapStrFloat(m map[models.Priority]float64) map[string]float64 {

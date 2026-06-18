@@ -212,6 +212,22 @@ type AuditLog struct {
 	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
 }
 
+type RateLimitStatus struct {
+	TaskType      string  `json:"task_type"`
+	CurrentRate   float64 `json:"current_rate"`
+	MaxPerSecond  int     `json:"max_per_second"`
+	WindowSizeMs  int     `json:"window_size_ms"`
+	UsagePercent  float64 `json:"usage_percent"`
+	WaitQueueSize int     `json:"wait_queue_size"`
+	Enabled       bool    `json:"enabled"`
+}
+
+type RateLimitThrottleStats struct {
+	TaskType     string `json:"task_type"`
+	ThrottleCount int64  `json:"throttle_count"`
+	WindowHours  int    `json:"window_hours"`
+}
+
 type MetricsSnapshot struct {
 	QueueDepths       map[Priority]int64 `json:"queue_depths"`
 	Throughput        float64            `json:"throughput"`
@@ -224,4 +240,5 @@ type MetricsSnapshot struct {
 	WorkersOffline    int                `json:"workers_offline"`
 	WorkersTotal      int                `json:"workers_total"`
 	Timestamp         time.Time          `json:"timestamp"`
+	ThrottleCounts    map[string]int64   `json:"throttle_counts,omitempty"`
 }

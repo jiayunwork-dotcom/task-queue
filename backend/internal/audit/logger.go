@@ -100,6 +100,14 @@ func WithRemoteAddr(addr string) LogOption {
 	}
 }
 
+func WithExtra(data map[string]interface{}) LogOption {
+	return func(l *models.AuditLog) {
+		if b, err := json.Marshal(data); err == nil {
+			l.NewState = b
+		}
+	}
+}
+
 func (l *Logger) flushLoop(ctx context.Context) {
 	defer l.wg.Done()
 	for {
