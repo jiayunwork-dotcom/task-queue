@@ -601,8 +601,8 @@ func (s *Server) CreateDAGTemplate(c *fiber.Ctx) error {
 	if len(req.Nodes) == 0 {
 		return c.Status(400).JSON(fiber.Map{"error": "at least one node required"})
 	}
-	nodesJSON, _ := toJSON(req.Nodes)
-	edgesJSON, _ := toJSON(req.Edges)
+	nodesJSON := toJSON(req.Nodes)
+	edgesJSON := toJSON(req.Edges)
 	tpl := &models.DAGTemplate{
 		Name:        req.Name,
 		Description: req.Description,

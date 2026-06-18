@@ -102,7 +102,9 @@ func (m *Manager) GetRunningCount() int {
 }
 
 func (m *Manager) GetAvailableSlots() int {
-	return int(m.slots.TryAcquire(0))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.DefaultSlots - len(m.runningTasks)
 }
 
 func (m *Manager) Start(ctx context.Context, dispatchCh <-chan queue.DispatchRequest, preemptCh <-chan uuid.UUID) {

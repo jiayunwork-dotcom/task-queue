@@ -209,7 +209,7 @@ func (e *DAGEngine) StartDAG(ctx context.Context, templateID uuid.UUID, payload 
 			"retries": 0,
 		}
 	}
-	stateJSON, _ := toJSON(nodeState)
+	stateJSON := toJSON(nodeState)
 
 	run := &models.DAGRun{
 		TemplateID: templateID,
@@ -302,7 +302,7 @@ func (e *DAGEngine) scheduleReadyNodes(
 		_ = e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady)
 	}
 
-	newState, _ := toJSON(nodeState)
+	newState := toJSON(nodeState)
 	_ = e.dagRepo.UpdateRunStatus(ctx, runID, models.DAGStatusRunning, newState)
 }
 
@@ -370,7 +370,7 @@ func (e *DAGEngine) HandleTaskComplete(ctx context.Context, task *models.Task) {
 					state["status"] = "skipped"
 				} else {
 					state["status"] = "failed"
-					newState, _ := toJSON(nodeState)
+					newState := toJSON(nodeState)
 					_ = e.dagRepo.UpdateRunStatus(ctx, run.ID, models.DAGStatusFailed, newState)
 					return
 				}
@@ -380,7 +380,7 @@ func (e *DAGEngine) HandleTaskComplete(ctx context.Context, task *models.Task) {
 	}
 
 	allDone, allSuccess := checkDAGCompletion(nodeState)
-	newState, _ := toJSON(nodeState)
+	newState := toJSON(nodeState)
 	if allDone {
 		if allSuccess {
 			_ = e.dagRepo.UpdateRunStatus(ctx, run.ID, models.DAGStatusSuccess, newState)

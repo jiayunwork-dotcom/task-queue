@@ -4,11 +4,13 @@ WORKDIR /app
 
 RUN apk add --no-cache git
 
-COPY go.mod go.sum ./
-RUN go mod download
+ENV GOPROXY=https://goproxy.cn,direct
+
+COPY go.mod ./
 
 COPY . .
 
+RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /task-queue ./cmd/server
 
 FROM alpine:3.19
@@ -18,7 +20,7 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /task-queue /app/task-queue
-COPY --from=builder /app/config /app/config 2>/dev/null || true
+COPY --from=builder /app/config /app/config
 
 EXPOSE 8080
 EXPOSE 50051
