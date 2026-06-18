@@ -465,11 +465,14 @@ export function formatDate(s?: string): string {
   return d.toLocaleString()
 }
 
-export function formatDuration(ms?: number): string {
-  if (!ms) return '-'
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`
-  return `${(ms / 60000).toFixed(2)}m`
+export function formatDuration(ms?: number | string | null): string {
+  if (ms === null || ms === undefined || ms === '') return '-'
+  const num = Number(ms)
+  if (isNaN(num) || num < 0) return '-'
+  if (num === 0) return '0ms'
+  if (num < 1000) return `${num}ms`
+  if (num < 60000) return `${(num / 1000).toFixed(2)}s`
+  return `${(num / 60000).toFixed(2)}m`
 }
 
 export function stageLabel(s: string): string {

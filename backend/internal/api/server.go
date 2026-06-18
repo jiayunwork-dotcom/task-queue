@@ -169,8 +169,8 @@ func (s *Server) registerRoutes() {
 
 	trace := api.Group("/trace")
 	trace.Get("", s.ListTraces)
-	trace.Get("/:taskId", s.GetTraceDetail)
 	trace.Get("/analysis/bottleneck", s.GetBottleneckAnalysis)
+	trace.Get("/:taskId", s.GetTraceDetail)
 
 	s.app.Get("/health", s.HealthCheck)
 }

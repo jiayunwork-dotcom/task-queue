@@ -119,7 +119,7 @@
                           </div>
                           <div v-if="idx < expandedDetails[trace.task_id].events.length - 1" class="flex flex-col items-center pt-2">
                             <div class="h-1 bg-gray-300 dark:bg-gray-600" style="width:80px;margin-top:7px"></div>
-                            <span class="text-[10px] text-gray-500 mt-1 whitespace-nowrap">{{ formatDuration(expandedDetails[trace.task_id].intervals[idx]?.duration_ms) }}</span>
+                            <span class="text-[10px] text-gray-500 mt-1 whitespace-nowrap">{{ getIntervalDuration(trace.task_id, idx) }}</span>
                           </div>
                         </template>
                       </div>
@@ -254,6 +254,12 @@ function statusDotColor(s: string) {
     cancelled: 'bg-slate-500',
   }
   return map[s] || 'bg-blue-500'
+}
+
+function getIntervalDuration(taskId: string, idx: number): string {
+  const detail = expandedDetails.value[taskId]
+  if (!detail || !detail.intervals || !detail.intervals[idx]) return '-'
+  return formatDuration(detail.intervals[idx].duration_ms)
 }
 
 function toggleStatus(v: string) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -138,33 +139,32 @@ func (r *TraceRepository) ListTraces(ctx context.Context, filter TraceFilter, li
 	}
 	defer rows.Close()
 
-	preSummaries := []struct {
-		TaskID      uuid.UUID
-		TaskType    string
-		FinalStatus models.TaskStatus
-		FirstOcc    time.Time
-		LastOcc     time.Time
-		NodeCount   int
-	}{}
+	preSummaries := []preSummary{}
+	taskIDList := make([]uuid.UUID, 0, limit)
 	for rows.Next() {
-		var s struct {
-			TaskID      uuid.UUID
-			TaskType    string
-			FinalStatus models.TaskStatus
-			FirstOcc    time.Time
-			LastOcc     time.Time
-			NodeCount   int
-		}
+		var s preSummary
 		if err := rows.Scan(&s.TaskID, &s.TaskType, &s.FinalStatus, &s.FirstOcc, &s.LastOcc, &s.NodeCount); err != nil {
 			return nil, 0, err
 		}
 		preSummaries = append(preSummaries, s)
+		taskIDList = append(taskIDList, s.TaskID)
+	}
+
+	eventsByTask := make(map[uuid.UUID][]models.TraceEvent)
+	if len(taskIDList) > 0 {
+		allEvents, err := r.getEventsByTaskIDs(ctx, taskIDList)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, ev := range allEvents {
+			eventsByTask[ev.TaskID] = append(eventsByTask[ev.TaskID], ev)
+		}
 	}
 
 	result := make([]models.TraceSummary, 0, len(preSummaries))
 	for _, ps := range preSummaries {
-		events, err := r.getEventsByTaskID(ctx, ps.TaskID)
-		if err != nil {
+		events := eventsByTask[ps.TaskID]
+		if len(events) == 0 {
 			continue
 		}
 		summary := r.buildSummary(events, ps)
@@ -315,6 +315,27 @@ func (r *TraceRepository) getEventsByTaskID(ctx context.Context, taskID uuid.UUI
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT id, task_id, task_type, from_status, to_status, trigger, worker_id, error, occurred_at
 		 FROM task_trace_events WHERE task_id = $1 ORDER BY occurred_at ASC`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+func (r *TraceRepository) getEventsByTaskIDs(ctx context.Context, taskIDs []uuid.UUID) ([]models.TraceEvent, error) {
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(taskIDs))
+	args := make([]interface{}, len(taskIDs))
+	for i, id := range taskIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	sql := fmt.Sprintf(`SELECT id, task_id, task_type, from_status, to_status, trigger, worker_id, error, occurred_at
+		 FROM task_trace_events WHERE task_id IN (%s) ORDER BY task_id, occurred_at ASC`,
+		strings.Join(placeholders, ","))
+	rows, err := r.db.Pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
