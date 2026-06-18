@@ -13,11 +13,16 @@ import (
 )
 
 type TaskRepository struct {
-	db *database.Database
+	db         *database.Database
+	traceHook  func(taskID uuid.UUID, taskType string, fromStatus, toStatus models.TaskStatus, trigger string, workerID *uuid.UUID, errMsg string)
 }
 
 func NewTaskRepository(db *database.Database) *TaskRepository {
 	return &TaskRepository{db: db}
+}
+
+func (r *TaskRepository) SetTraceHook(hook func(taskID uuid.UUID, taskType string, fromStatus, toStatus models.TaskStatus, trigger string, workerID *uuid.UUID, errMsg string)) {
+	r.traceHook = hook
 }
 
 func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
@@ -59,7 +64,14 @@ func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 		task.TimeoutSeconds, task.CallbackURL, task.RetryMode, task.RetryInterval,
 		task.RetryCronExpr, task.DAGID, task.DAGNodeID, task.CreatedAt, task.UpdatedAt,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if r.traceHook != nil {
+		r.traceHook(task.ID, task.Type, "", task.Status, "task_created", nil, "")
+	}
+	return nil
 }
 
 func (r *TaskRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Task, error) {
@@ -84,17 +96,25 @@ func (r *TaskRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Tas
 	return &t, nil
 }
 
-func (r *TaskRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status models.TaskStatus, extra ...interface{}) error {
+func (r *TaskRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status models.TaskStatus, extra ...interface{}) (models.TaskStatus, error) {
 	tx, err := r.db.Pool.Begin(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback(ctx)
 
 	var currentStatus models.TaskStatus
-	err = tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, id).Scan(&currentStatus)
+	var taskType string
+	var workerID *uuid.UUID
+	var lastError string
+	err = tx.QueryRow(ctx, `SELECT status, type, worker_id, COALESCE(last_error, '') FROM tasks WHERE id = $1 FOR UPDATE`, id).Scan(&currentStatus, &taskType, &workerID, &lastError)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	if currentStatus == status {
+		_ = tx.Commit(ctx)
+		return currentStatus, nil
 	}
 
 	now := time.Now()
@@ -118,16 +138,41 @@ func (r *TaskRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 			sql += fmt.Sprintf(", %s = $%d", field, argIdx)
 			args = append(args, extra[i+1])
 			argIdx++
+			if field == "worker_id" {
+				if wid, ok := extra[i+1].(uuid.UUID); ok {
+					cp := wid
+					workerID = &cp
+				} else if widPtr, ok := extra[i+1].(*uuid.UUID); ok {
+					workerID = widPtr
+				}
+			}
+			if field == "last_error" {
+				if e, ok := extra[i+1].(string); ok {
+					lastError = e
+				}
+			}
 		}
 	}
 	sql += fmt.Sprintf(" WHERE id = $%d", argIdx)
 	args = append(args, id)
 
 	if _, err := tx.Exec(ctx, sql, args...); err != nil {
-		return err
+		return "", err
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+
+	if r.traceHook != nil {
+		var errMsg string
+		if status == models.TaskStatusFailed || status == models.TaskStatusDeadLetter {
+			errMsg = lastError
+		}
+		r.traceHook(id, taskType, currentStatus, status, "status_change", workerID, errMsg)
+	}
+
+	return currentStatus, nil
 }
 
 func (r *TaskRepository) LeaseTask(ctx context.Context, taskID uuid.UUID, workerID uuid.UUID, leaseTTL time.Duration) (bool, error) {

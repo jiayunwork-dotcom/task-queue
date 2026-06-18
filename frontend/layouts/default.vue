@@ -95,6 +95,7 @@ const deadLetterCount = ref(0)
 const navItems = computed<NavItem[]>(() => [
   { to: '/', label: 'Dashboard', icon: 'i-heroicons-squares-2x2-20-solid' },
   { to: '/tasks', label: 'Tasks', icon: 'i-heroicons-queue-list-20-solid' },
+  { to: '/trace', label: 'Trace Analytics', icon: 'i-heroicons-chart-bar-20-solid' },
   { to: '/dead-letter', label: 'Dead Letter', icon: 'i-heroicons-no-symbol-20-solid', badge: deadLetterCount.value || undefined, badgeColor: 'red' },
   { to: '/dags', label: 'DAG Editor', icon: 'i-heroicons-swatch-20-solid' },
   { to: '/workers', label: 'Workers', icon: 'i-heroicons-server-stack-20-solid' },
@@ -104,6 +105,7 @@ const navItems = computed<NavItem[]>(() => [
 const pageTitles: Record<string, { title: string; subtitle: string }> = {
   '/': { title: 'Dashboard', subtitle: 'Real-time overview of your task queue cluster' },
   '/tasks': { title: 'Task Management', subtitle: 'Browse and manage all tasks in the system' },
+  '/trace': { title: 'Trace Analytics', subtitle: 'Track task execution lifecycle and analyze performance bottlenecks' },
   '/dead-letter': { title: 'Dead Letter Queue', subtitle: 'Inspect and recover failed tasks' },
   '/dags': { title: 'DAG Orchestration', subtitle: 'Design and run task dependency graphs' },
   '/workers': { title: 'Worker Cluster', subtitle: 'Monitor and manage worker nodes' },

@@ -360,7 +360,7 @@ func (m *Manager) processTask(parentCtx context.Context, req queue.DispatchReque
 		}
 	}
 	if !hasHandler {
-		_ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusFailed,
+		_, _ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusFailed,
 			"last_error", fmt.Sprintf("no handler registered for task type: %s", task.Type))
 		return
 	}
@@ -396,7 +396,7 @@ func (m *Manager) processTask(parentCtx context.Context, req queue.DispatchReque
 		m.mu.Unlock()
 	}()
 
-	_ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusRunning,
+	_, _ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusRunning,
 		"worker_id", m.selfWorker.ID,
 		"handler_id", exec.HandlerID)
 	if m.auditLog != nil {
@@ -408,7 +408,7 @@ func (m *Manager) processTask(parentCtx context.Context, req queue.DispatchReque
 	preempted := taskCtx.Err() == context.Canceled && execErr == nil
 	if preempted {
 		_ = m.taskRepo.CompleteExecution(parentCtx, exec.ID, models.TaskStatusReady, "preempted")
-		_ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusReady,
+		_, _ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusReady,
 			"worker_id", nil, "handler_id", nil, "lease_expires_at", nil)
 		if m.auditLog != nil {
 			m.auditLog(parentCtx, "task", task.ID, "preempted")
@@ -426,7 +426,7 @@ func (m *Manager) processTask(parentCtx context.Context, req queue.DispatchReque
 		_ = m.taskRepo.IncrementRetry(parentCtx, task.ID, errMsg)
 
 		if task.RetryCount+1 >= task.MaxRetries {
-			_ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusDeadLetter,
+			_, _ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusDeadLetter,
 				"last_error", errMsg)
 			if m.deadCallback != nil {
 				m.deadCallback(parentCtx, task, errMsg)
@@ -445,7 +445,7 @@ func (m *Manager) processTask(parentCtx context.Context, req queue.DispatchReque
 	} else {
 		_ = m.taskRepo.CompleteExecution(parentCtx, exec.ID, models.TaskStatusSuccess, "")
 		_ = m.workerRepo.IncrementStats(parentCtx, m.selfWorker.ID, 1, 0)
-		_ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusSuccess)
+		_, _ = m.taskRepo.UpdateStatus(parentCtx, task.ID, models.TaskStatusSuccess)
 		if m.auditLog != nil {
 			m.auditLog(parentCtx, "task", task.ID, "success")
 		}
@@ -605,7 +605,7 @@ func (r *DeadLetterReaper) reapTimedOutWorkers(ctx context.Context) {
 		}
 		taskIDs, _ := r.workerRepo.GetTaskIDsByWorker(ctx, w.ID)
 		for _, tid := range taskIDs {
-			_ = r.taskRepo.UpdateStatus(ctx, tid, models.TaskStatusReady,
+			_, _ = r.taskRepo.UpdateStatus(ctx, tid, models.TaskStatusReady,
 				"worker_id", nil, "handler_id", nil, "lease_expires_at", nil)
 			task, _ := r.taskRepo.GetByID(ctx, tid)
 			if task != nil {
@@ -623,7 +623,7 @@ func (r *DeadLetterReaper) recoverExpiredLeases(ctx context.Context) {
 		return
 	}
 	for _, id := range ids {
-		_ = r.taskRepo.UpdateStatus(ctx, id, models.TaskStatusReady,
+		_, _ = r.taskRepo.UpdateStatus(ctx, id, models.TaskStatusReady,
 			"worker_id", nil, "handler_id", nil, "lease_expires_at", nil)
 		if r.auditLog != nil {
 			r.auditLog(ctx, "task", id, "lease_expired_requeued")

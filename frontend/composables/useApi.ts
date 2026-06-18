@@ -131,6 +131,76 @@ export interface RateLimitThrottleStats {
   window_hours: number
 }
 
+export interface TraceEvent {
+  id: string
+  task_id: string
+  task_type: string
+  from_status: string
+  to_status: string
+  trigger: string
+  worker_id?: string
+  error?: string
+  occurred_at: string
+}
+
+export interface TraceSummary {
+  task_id: string
+  task_type: string
+  final_status: string
+  created_at: string
+  completed_at?: string
+  total_duration_ms: number
+  queue_wait_ms: number
+  execution_ms: number
+  retry_interval_ms: number
+  node_count: number
+}
+
+export interface TraceInterval {
+  from_status: string
+  to_status: string
+  duration_ms: number
+}
+
+export interface RetryError {
+  attempt: number
+  error: string
+  timestamp: string
+}
+
+export interface TraceDetail {
+  task_id: string
+  task_type: string
+  final_status: string
+  created_at: string
+  completed_at?: string
+  total_duration_ms: number
+  queue_wait_ms: number
+  execution_ms: number
+  retry_interval_ms: number
+  events: TraceEvent[]
+  intervals: TraceInterval[]
+  retry_errors: RetryError[]
+}
+
+export interface StageStats {
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  avg_ms: number
+  percent_of_total: number
+}
+
+export interface BottleneckAnalysis {
+  task_type: string
+  total_samples: number
+  time_from: string
+  time_to: string
+  stages: Record<string, StageStats>
+  bottleneck_stage?: string
+  bottleneck_percent: number
+}
+
 const API_BASE = '/api/v1'
 
 function useApi<T>(path: string, options: UseFetchOptions<T> = {}) {
@@ -400,4 +470,32 @@ export function formatDuration(ms?: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`
   return `${(ms / 60000).toFixed(2)}m`
+}
+
+export function stageLabel(s: string): string {
+  const map: Record<string, string> = {
+    queue_wait: '队列等待',
+    execution: '任务执行',
+    retry_interval: '重试间隔',
+    other: '其他',
+  }
+  return map[s] || s
+}
+
+export function useTraces(params?: Record<string, any>) {
+  return useApi<any>('/trace', {
+    query: params,
+    method: 'GET',
+  })
+}
+
+export function useTraceDetail(taskId: string) {
+  return useApi<TraceDetail>(`/trace/${taskId}`)
+}
+
+export function useBottleneckAnalysis(params?: Record<string, any>) {
+  return useApi<BottleneckAnalysis>('/trace/analysis/bottleneck', {
+    query: params,
+    method: 'GET',
+  })
 }

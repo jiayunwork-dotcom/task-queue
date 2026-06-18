@@ -24,6 +24,7 @@ import (
 	"task-queue/internal/ratelimit"
 	"task-queue/internal/repository"
 	"task-queue/internal/retry"
+	"task-queue/internal/tracing"
 	"task-queue/internal/worker"
 )
 
@@ -63,6 +64,14 @@ func main() {
 	deadRepo := repository.NewDeadLetterRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 	dagRepo := repository.NewDAGRepository(db)
+	traceRepo := repository.NewTraceRepository(db)
+
+	traceLogger := tracing.NewLogger(traceRepo)
+	traceLogger.Start(ctx)
+
+	taskRepo.SetTraceHook(func(taskID uuid.UUID, taskType string, fromStatus, toStatus models.TaskStatus, trigger string, workerID *uuid.UUID, errMsg string) {
+		traceLogger.Record(taskID, taskType, fromStatus, toStatus, trigger, workerID, errMsg)
+	})
 
 	auditLogger := audit.NewLogger(auditRepo)
 	auditLogger.Start(ctx)
@@ -146,7 +155,7 @@ func main() {
 	reaper.Start(ctx)
 
 	server := api.NewServer(
-		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo,
+		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo, traceRepo,
 		auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine, metricsColl,
 		rateLimitConfigMgr, rateLimiter, waitQueue)
 
@@ -187,6 +196,7 @@ func main() {
 	scheduler.Stop()
 	delayScheduler.Stop()
 	auditLogger.Stop()
+	traceLogger.Stop()
 
 	_ = server.Shutdown()
 	log.Println("shutdown complete")

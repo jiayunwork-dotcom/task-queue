@@ -322,7 +322,7 @@ func (s *DelayScheduler) scanAndDispatch(ctx context.Context) {
 			continue
 		}
 
-		if err := s.taskRepo.UpdateStatus(ctx, taskID, models.TaskStatusReady); err != nil {
+		if _, err := s.taskRepo.UpdateStatus(ctx, taskID, models.TaskStatusReady); err != nil {
 			continue
 		}
 		if s.auditLog != nil {

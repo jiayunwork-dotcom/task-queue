@@ -190,6 +190,22 @@ func (d *Database) Migrate(ctx context.Context) error {
 			workers_total INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_history_timestamp ON metrics_history(timestamp DESC)`,
+
+		`CREATE TABLE IF NOT EXISTS task_trace_events (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			task_id UUID NOT NULL,
+			task_type VARCHAR(255) NOT NULL,
+			from_status VARCHAR(32) NOT NULL DEFAULT '',
+			to_status VARCHAR(32) NOT NULL,
+			trigger VARCHAR(128) NOT NULL DEFAULT '',
+			worker_id UUID,
+			error TEXT,
+			occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_task_id ON task_trace_events(task_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_occurred_at ON task_trace_events(occurred_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_type_status_time ON task_trace_events(task_type, occurred_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_composite ON task_trace_events(occurred_at DESC, task_type) INCLUDE (task_id, to_status, from_status, trigger, worker_id, error)`,
 	}
 
 	for _, stmt := range statements {

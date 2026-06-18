@@ -242,3 +242,74 @@ type MetricsSnapshot struct {
 	Timestamp         time.Time          `json:"timestamp"`
 	ThrottleCounts    map[string]int64   `json:"throttle_counts,omitempty"`
 }
+
+type TraceEvent struct {
+	ID          uuid.UUID   `json:"id" db:"id"`
+	TaskID      uuid.UUID   `json:"task_id" db:"task_id"`
+	TaskType    string      `json:"task_type" db:"task_type"`
+	FromStatus  TaskStatus  `json:"from_status" db:"from_status"`
+	ToStatus    TaskStatus  `json:"to_status" db:"to_status"`
+	Trigger     string      `json:"trigger" db:"trigger"`
+	WorkerID    *uuid.UUID  `json:"worker_id,omitempty" db:"worker_id"`
+	Error       string      `json:"error,omitempty" db:"error"`
+	OccurredAt  time.Time   `json:"occurred_at" db:"occurred_at"`
+	FinalStatus *TaskStatus `json:"final_status,omitempty" db:"-"`
+}
+
+type TraceSummary struct {
+	TaskID           uuid.UUID  `json:"task_id"`
+	TaskType         string     `json:"task_type"`
+	FinalStatus      TaskStatus `json:"final_status"`
+	CreatedAt        time.Time  `json:"created_at"`
+	CompletedAt      *time.Time `json:"completed_at"`
+	TotalDurationMs  int64      `json:"total_duration_ms"`
+	QueueWaitMs      int64      `json:"queue_wait_ms"`
+	ExecutionMs      int64      `json:"execution_ms"`
+	RetryIntervalMs  int64      `json:"retry_interval_ms"`
+	NodeCount        int        `json:"node_count"`
+}
+
+type TraceDetail struct {
+	TaskID           uuid.UUID       `json:"task_id"`
+	TaskType         string          `json:"task_type"`
+	FinalStatus      TaskStatus      `json:"final_status"`
+	CreatedAt        time.Time       `json:"created_at"`
+	CompletedAt      *time.Time      `json:"completed_at"`
+	TotalDurationMs  int64           `json:"total_duration_ms"`
+	QueueWaitMs      int64           `json:"queue_wait_ms"`
+	ExecutionMs      int64           `json:"execution_ms"`
+	RetryIntervalMs  int64           `json:"retry_interval_ms"`
+	Events           []TraceEvent    `json:"events"`
+	Intervals        []TraceInterval `json:"intervals"`
+	RetryErrors      []RetryError    `json:"retry_errors"`
+}
+
+type TraceInterval struct {
+	FromStatus  TaskStatus `json:"from_status"`
+	ToStatus    TaskStatus `json:"to_status"`
+	DurationMs  int64      `json:"duration_ms"`
+}
+
+type RetryError struct {
+	Attempt   int    `json:"attempt"`
+	Error     string `json:"error"`
+	Timestamp string `json:"timestamp"`
+}
+
+type BottleneckAnalysis struct {
+	TaskType       string                `json:"task_type"`
+	TotalSamples   int64                 `json:"total_samples"`
+	TimeFrom       time.Time             `json:"time_from"`
+	TimeTo         time.Time             `json:"time_to"`
+	Stages         map[string]StageStats `json:"stages"`
+	Bottleneck     *string               `json:"bottleneck_stage"`
+	BottleneckPct  float64               `json:"bottleneck_percent"`
+}
+
+type StageStats struct {
+	P50Ms int64   `json:"p50_ms"`
+	P90Ms int64   `json:"p90_ms"`
+	P99Ms int64   `json:"p99_ms"`
+	AvgMs float64 `json:"avg_ms"`
+	Pct   float64 `json:"percent_of_total"`
+}

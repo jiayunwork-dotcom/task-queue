@@ -82,7 +82,7 @@ func (e *Engine) HandleRetry(ctx context.Context, task *models.Task, err error, 
 	delay := time.Until(nextRun)
 
 	if delay <= 5*time.Second {
-		if err := e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady); err != nil {
+		if _, err := e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady); err != nil {
 			return
 		}
 		_ = e.scheduler.EnqueueReady(ctx, task.ID, task.Priority)
@@ -91,7 +91,7 @@ func (e *Engine) HandleRetry(ctx context.Context, task *models.Task, err error, 
 
 	delaySeconds := int(delay.Seconds())
 	scheduledAt := nextRun
-	if err := e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusDelayed,
+	if _, err := e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusDelayed,
 		"scheduled_at", scheduledAt,
 		"delay_seconds", delaySeconds); err != nil {
 		return
@@ -125,7 +125,7 @@ func (e *Engine) RetryDeadLetter(ctx context.Context, taskIDs []uuid.UUID) (int,
 		if task.Status != models.TaskStatusDeadLetter {
 			continue
 		}
-		if err := e.taskRepo.UpdateStatus(ctx, id, models.TaskStatusReady,
+		if _, err := e.taskRepo.UpdateStatus(ctx, id, models.TaskStatusReady,
 			"retry_count", 0, "last_error", nil, "completed_at", nil); err != nil {
 			continue
 		}
@@ -153,7 +153,7 @@ func (e *Engine) DiscardDeadLetter(ctx context.Context, taskIDs []uuid.UUID) (in
 		if err := e.deadRepo.Remove(ctx, id); err != nil {
 			continue
 		}
-		if err := e.taskRepo.UpdateStatus(ctx, id, models.TaskStatusCancelled); err != nil {
+		if _, err := e.taskRepo.UpdateStatus(ctx, id, models.TaskStatusCancelled); err != nil {
 			continue
 		}
 		success++
@@ -299,7 +299,7 @@ func (e *DAGEngine) scheduleReadyNodes(
 		nodeState[node.ID] = state
 
 		_ = e.scheduler.EnqueueReady(ctx, task.ID, task.Priority)
-		_ = e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady)
+		_, _ = e.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady)
 	}
 
 	newState := toJSON(nodeState)
@@ -363,7 +363,7 @@ func (e *DAGEngine) HandleTaskComplete(ctx context.Context, task *models.Task) {
 						DAGNodeID:      task.DAGNodeID,
 					}
 					_ = e.taskRepo.Create(ctx, newTask)
-					_ = e.taskRepo.UpdateStatus(ctx, newTask.ID, models.TaskStatusReady)
+					_, _ = e.taskRepo.UpdateStatus(ctx, newTask.ID, models.TaskStatusReady)
 					_ = e.scheduler.EnqueueReady(ctx, newTask.ID, newTask.Priority)
 					state["task_id"] = newTask.ID.String()
 				} else if strategy == models.DAGStrategySkip {

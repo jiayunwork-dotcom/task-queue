@@ -44,6 +44,7 @@ type Server struct {
 	handlerRepo        *repository.HandlerRepository
 	deadRepo           *repository.DeadLetterRepository
 	dagRepo            *repository.DAGRepository
+	traceRepo          *repository.TraceRepository
 	auditLog           *audit.Logger
 	scheduler          *queue.PriorityScheduler
 	delaySched         *queue.DelayScheduler
@@ -63,6 +64,7 @@ func NewServer(
 	handlerRepo *repository.HandlerRepository,
 	deadRepo *repository.DeadLetterRepository,
 	dagRepo *repository.DAGRepository,
+	traceRepo *repository.TraceRepository,
 	auditLog *audit.Logger,
 	scheduler *queue.PriorityScheduler,
 	delaySched *queue.DelayScheduler,
@@ -96,6 +98,7 @@ func NewServer(
 		handlerRepo:        handlerRepo,
 		deadRepo:           deadRepo,
 		dagRepo:            dagRepo,
+		traceRepo:          traceRepo,
 		auditLog:           auditLog,
 		scheduler:          scheduler,
 		delaySched:         delaySched,
@@ -163,6 +166,11 @@ func (s *Server) registerRoutes() {
 	rl.Delete("/configs/:taskType", s.DeleteRateLimitConfig)
 	rl.Get("/status", s.GetRateLimitStatus)
 	rl.Get("/throttle-stats", s.GetRateLimitThrottleStats)
+
+	trace := api.Group("/trace")
+	trace.Get("", s.ListTraces)
+	trace.Get("/:taskId", s.GetTraceDetail)
+	trace.Get("/analysis/bottleneck", s.GetBottleneckAnalysis)
 
 	s.app.Get("/health", s.HealthCheck)
 }
@@ -259,7 +267,7 @@ func (s *Server) CreateTask(c *fiber.Ctx) error {
 		_ = s.delaySched.EnqueueDelay(ctx, task.ID, *task.ScheduledAt)
 	} else {
 		_ = s.scheduler.EnqueueReady(ctx, task.ID, task.Priority)
-		_ = s.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady)
+		_, _ = s.taskRepo.UpdateStatus(ctx, task.ID, models.TaskStatusReady)
 	}
 
 	return c.Status(201).JSON(task)
@@ -340,7 +348,7 @@ func (s *Server) CancelTask(c *fiber.Ctx) error {
 		task.Status == models.TaskStatusDeadLetter || task.Status == models.TaskStatusCancelled {
 		return c.Status(400).JSON(fiber.Map{"error": "task already in terminal state"})
 	}
-	if err := s.taskRepo.UpdateStatus(ctx, id, models.TaskStatusCancelled); err != nil {
+	if _, err := s.taskRepo.UpdateStatus(ctx, id, models.TaskStatusCancelled); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	s.auditLog.Log("task", id, "cancelled", audit.WithRemoteAddr(c.IP()))
@@ -357,7 +365,7 @@ func (s *Server) RetryTask(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "task not found"})
 	}
-	if err := s.taskRepo.UpdateStatus(ctx, id, models.TaskStatusReady,
+	if _, err := s.taskRepo.UpdateStatus(ctx, id, models.TaskStatusReady,
 		"retry_count", 0, "completed_at", nil, "last_error", nil); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -897,6 +905,109 @@ func (s *Server) GetRateLimitThrottleStats(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(result)
+}
+
+func (s *Server) ListTraces(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	limit := c.QueryInt("limit", 50)
+	offset := c.QueryInt("offset", 0)
+	if limit > 500 {
+		limit = 500
+	}
+
+	filter := repository.TraceFilter{}
+	if from := c.Query("from"); from != "" {
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			filter.From = &t
+		}
+	}
+	if to := c.Query("to"); to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			filter.To = &t
+		}
+	}
+	if t := c.Query("type"); t != "" {
+		filter.TaskType = t
+	}
+	if statuses := c.Query("final_statuses"); statuses != "" {
+		for _, s2 := range splitAndTrim(statuses, ",") {
+			filter.FinalStatus = append(filter.FinalStatus, models.TaskStatus(s2))
+		}
+	} else if status := c.Query("final_status"); status != "" {
+		filter.FinalStatus = append(filter.FinalStatus, models.TaskStatus(status))
+	}
+
+	traces, total, err := s.traceRepo.ListTraces(ctx, filter, limit, offset)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"items": traces, "total": total, "limit": limit, "offset": offset})
+}
+
+func (s *Server) GetTraceDetail(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("taskId"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid task id"})
+	}
+	detail, err := s.traceRepo.GetTraceDetail(c.UserContext(), id)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(detail)
+}
+
+func (s *Server) GetBottleneckAnalysis(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	taskType := c.Query("type", "")
+	var from, to time.Time
+	var err error
+	if fromStr := c.Query("from"); fromStr != "" {
+		from, err = time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid from time"})
+		}
+	} else {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if toStr := c.Query("to"); toStr != "" {
+		to, err = time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid to time"})
+		}
+	} else {
+		to = time.Now()
+	}
+
+	result, err := s.traceRepo.AnalyzeBottleneck(ctx, from, to, taskType)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(result)
+}
+
+func splitAndTrim(s, sep string) []string {
+	parts := make([]string, 0)
+	for _, p := range splitString(s, sep) {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return parts
+}
+
+func splitString(s, sep string) []string {
+	result := make([]string, 0)
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep[0] {
+			result = append(result, s[start:i])
+			start = i + 1
+		}
+	}
+	if start <= len(s) {
+		result = append(result, s[start:])
+	}
+	return result
 }
 
 func toJSON(v interface{}) []byte {
