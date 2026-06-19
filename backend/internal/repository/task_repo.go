@@ -416,7 +416,7 @@ func (r *TaskRepository) GetDurationHeatmap(ctx context.Context, days int, taskT
 	}
 
 	where := `WHERE ended_at IS NOT NULL AND status IN ('success', 'failed')
-		AND ended_at >= NOW() - ($1 || ' days')::INTERVAL`
+		AND ended_at >= NOW() - $1 * INTERVAL '1 day'`
 	args := []interface{}{days}
 	argIdx := 2
 
