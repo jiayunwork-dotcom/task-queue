@@ -132,6 +132,19 @@ func NewServer(
 }
 
 func (s *Server) registerRoutes() {
+	s.app.Use("/api/v1/auto-scaling/ws", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+	s.app.Get("/api/v1/auto-scaling/ws", websocket.New(func(c *websocket.Conn) {
+		if s.wsHub != nil {
+			s.wsHub.HandleConnection(c)
+		}
+	}))
+
 	api := s.app.Group("/api/v1")
 
 	tasks := api.Group("/tasks")
@@ -208,18 +221,6 @@ func (s *Server) registerRoutes() {
 	scaling.Patch("/policies/:id/toggle", s.ToggleScalingPolicy)
 	scaling.Get("/metrics", s.GetScalingMetrics)
 	scaling.Get("/history", s.ListScalingHistory)
-	scaling.Use("/ws", func(c *fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			c.Locals("allowed", true)
-			return c.Next()
-		}
-		return fiber.ErrUpgradeRequired
-	})
-	scaling.Get("/ws", websocket.New(func(c *websocket.Conn) {
-		if s.wsHub != nil {
-			s.wsHub.HandleConnection(c)
-		}
-	}))
 
 	s.app.Get("/health", s.HealthCheck)
 }

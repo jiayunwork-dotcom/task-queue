@@ -443,7 +443,7 @@ type ScalingPolicy struct {
 	ScaleOutThreshold     int              `json:"scale_out_threshold" db:"scale_out_threshold"`
 	ScaleInThresholdPct   float64          `json:"scale_in_threshold_pct" db:"scale_in_threshold_pct"`
 	Enabled               bool             `json:"enabled" db:"enabled"`
-	ScheduleWindows       []ScheduleWindow `json:"schedule_windows,omitempty" db:"schedule_windows"`
+	ScheduleWindows       []ScheduleWindow `json:"schedule_windows" db:"schedule_windows"`
 	LastOperationAt       *time.Time       `json:"last_operation_at,omitempty" db:"last_operation_at"`
 	CreatedAt             time.Time        `json:"created_at" db:"created_at"`
 	UpdatedAt             time.Time        `json:"updated_at" db:"updated_at"`

@@ -892,13 +892,17 @@ function disconnectWebSocket() {
   wsConnected.value = false
 }
 
+function toPlainObject(obj: any): any {
+  return JSON.parse(JSON.stringify(obj))
+}
+
 async function createPolicy() {
   try {
     if (!createForm.value.task_type) {
       alert('Task type is required')
       return
     }
-    await createScalingPolicy(createForm.value)
+    await createScalingPolicy(toPlainObject(createForm.value))
     showCreateModal.value = false
     await loadPolicies()
     await loadMetrics()
@@ -909,7 +913,7 @@ async function createPolicy() {
 
 async function savePolicy(policyId: string) {
   try {
-    await updateScalingPolicy(policyId, editForm.value)
+    await updateScalingPolicy(policyId, toPlainObject(editForm.value))
     expandedPolicyId.value = null
     await loadPolicies()
     await loadMetrics()
