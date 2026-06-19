@@ -281,11 +281,12 @@ func (d *Detector) getCompletedDurations(ctx context.Context, from time.Time, ta
 
 	if taskType != nil {
 		rows, err = d.db.Pool.Query(ctx,
-			`SELECT te.task_type, te.duration_ms
+			`SELECT t.type, te.duration_ms
 			 FROM task_executions te
+			 JOIN tasks t ON t.id = te.task_id
 			 WHERE te.ended_at >= $1 AND te.ended_at IS NOT NULL
 			   AND te.status IN ('success','failed','dead_letter')
-			   AND te.task_type = $2`,
+			   AND t.type = $2`,
 			from, *taskType)
 	} else {
 		rows, err = d.db.Pool.Query(ctx,
@@ -326,12 +327,13 @@ func (d *Detector) getCompletionStats(ctx context.Context, from time.Time, taskT
 
 	if taskType != nil {
 		rows, err = d.db.Pool.Query(ctx,
-			`SELECT te.status, COUNT(*)
+			`SELECT t.type, te.status, COUNT(*)
 			 FROM task_executions te
+			 JOIN tasks t ON t.id = te.task_id
 			 WHERE te.ended_at >= $1 AND te.ended_at IS NOT NULL
 			   AND te.status IN ('success','failed','dead_letter')
-			   AND te.task_type = $2
-			 GROUP BY te.status`,
+			   AND t.type = $2
+			 GROUP BY t.type, te.status`,
 			from, *taskType)
 	} else {
 		rows, err = d.db.Pool.Query(ctx,
@@ -353,15 +355,8 @@ func (d *Detector) getCompletionStats(ctx context.Context, from time.Time, taskT
 		var tt string
 		var status string
 		var count int64
-		if taskType != nil {
-			tt = *taskType
-			if err := rows.Scan(&status, &count); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := rows.Scan(&tt, &status, &count); err != nil {
-				return nil, err
-			}
+		if err := rows.Scan(&tt, &status, &count); err != nil {
+			return nil, err
 		}
 		st := result[tt]
 		st.total += count

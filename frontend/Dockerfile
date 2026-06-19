@@ -21,6 +21,10 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 COPY --from=builder /app/.output/public /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
+RUN if [ -f /usr/share/nginx/html/200.html ] && [ ! -f /usr/share/nginx/html/index.html ]; then \
+        cp /usr/share/nginx/html/200.html /usr/share/nginx/html/index.html; \
+    fi
+
 RUN ls -la /usr/share/nginx/html/ || echo "Nginx html dir check"
 
 EXPOSE 80

@@ -159,62 +159,62 @@ func (r *AlertRepository) ListEnabledRules(ctx context.Context) ([]models.AlertR
 }
 
 func (r *AlertRepository) UpdateRule(ctx context.Context, id uuid.UUID, u *AlertRuleUpdate) (*models.AlertRule, error) {
-	type column struct {
-		expr string
-		val  interface{}
+	sets := []string{"updated_at = NOW()"}
+	args := []interface{}{}
+	argIdx := 1
+
+	addSet := func(exprTemplate string, val interface{}) {
+		argIdx++
+		sets = append(sets, fmt.Sprintf(exprTemplate, argIdx))
+		args = append(args, val)
 	}
-	cols := []column{{expr: "updated_at = NOW()", val: nil}}
 
 	if u.Name != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("name = $%d", len(cols)+1), val: *u.Name})
+		addSet("name = $%d", *u.Name)
 	}
 	if u.TaskType != nil {
-		// outer ptr non-nil means caller wants to update this col
 		t := pgtype.Text{}
 		if *u.TaskType != nil {
 			t = pgtype.Text{String: **u.TaskType, Valid: true}
 		}
-		cols = append(cols, column{expr: fmt.Sprintf("task_type = $%d", len(cols)+1), val: t})
+		addSet("task_type = $%d", t)
 	}
 	if u.ConditionType != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("condition_type = $%d", len(cols)+1), val: string(*u.ConditionType)})
+		addSet("condition_type = $%d", string(*u.ConditionType))
 	}
 	if u.Threshold != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("threshold = $%d", len(cols)+1), val: *u.Threshold})
+		addSet("threshold = $%d", *u.Threshold)
 	}
 	if u.WindowMinutes != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("window_minutes = $%d", len(cols)+1), val: *u.WindowMinutes})
+		addSet("window_minutes = $%d", *u.WindowMinutes)
 	}
 	if u.CooldownSeconds != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("cooldown_seconds = $%d", len(cols)+1), val: *u.CooldownSeconds})
+		addSet("cooldown_seconds = $%d", *u.CooldownSeconds)
 	}
 	if u.NotifyType != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("notify_type = $%d", len(cols)+1), val: string(*u.NotifyType)})
+		addSet("notify_type = $%d", string(*u.NotifyType))
 	}
 	if u.WebhookURL != nil {
 		t := pgtype.Text{}
 		if *u.WebhookURL != nil {
 			t = pgtype.Text{String: **u.WebhookURL, Valid: true}
 		}
-		cols = append(cols, column{expr: fmt.Sprintf("webhook_url = $%d", len(cols)+1), val: t})
+		addSet("webhook_url = $%d", t)
 	}
 	if u.Enabled != nil {
-		cols = append(cols, column{expr: fmt.Sprintf("enabled = $%d", len(cols)+1), val: *u.Enabled})
+		addSet("enabled = $%d", *u.Enabled)
 	}
 
+	argIdx++
 	setClause := ""
-	args := []interface{}{}
-	for i, c := range cols {
+	for i, s := range sets {
 		if i > 0 {
 			setClause += ", "
 		}
-		setClause += c.expr
-		if c.val != nil {
-			args = append(args, c.val)
-		}
+		setClause += s
 	}
 	args = append(args, id)
-	query := fmt.Sprintf(`UPDATE alert_rules SET %s WHERE id = $%d`, setClause, len(args))
+	query := fmt.Sprintf(`UPDATE alert_rules SET %s WHERE id = $%d`, setClause, argIdx)
 
 	_, err := r.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
