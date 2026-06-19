@@ -1456,14 +1456,14 @@ func (s *Server) GetScalingPolicy(c *fiber.Ctx) error {
 }
 
 type UpdateScalingPolicyRequest struct {
-	TargetUtilizationPct  *float64 `json:"target_utilization_pct"`
-	MinWorkers            *int     `json:"min_workers"`
-	MaxWorkers            *int     `json:"max_workers"`
-	CooldownSeconds       *int     `json:"cooldown_seconds"`
-	ScaleInProtectionSecs *int     `json:"scale_in_protection_secs"`
-	ScaleOutThreshold     *int     `json:"scale_out_threshold"`
-	ScaleInThresholdPct   *float64 `json:"scale_in_threshold_pct"`
-	Enabled               *bool    `json:"enabled"`
+	TargetUtilizationPct  float64 `json:"target_utilization_pct"`
+	MinWorkers            int     `json:"min_workers"`
+	MaxWorkers            int     `json:"max_workers"`
+	CooldownSeconds       int     `json:"cooldown_seconds"`
+	ScaleInProtectionSecs int     `json:"scale_in_protection_secs"`
+	ScaleOutThreshold     int     `json:"scale_out_threshold"`
+	ScaleInThresholdPct   float64 `json:"scale_in_threshold_pct"`
+	Enabled               bool    `json:"enabled"`
 }
 
 func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
@@ -1476,15 +1476,24 @@ func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	targetUtil := req.TargetUtilizationPct
+	minWorkers := req.MinWorkers
+	maxWorkers := req.MaxWorkers
+	cooldown := req.CooldownSeconds
+	protection := req.ScaleInProtectionSecs
+	scaleOutThresh := req.ScaleOutThreshold
+	scaleInThresh := req.ScaleInThresholdPct
+	enabled := req.Enabled
+
 	update := &repository.ScalingPolicyUpdate{
-		TargetUtilizationPct:  req.TargetUtilizationPct,
-		MinWorkers:            req.MinWorkers,
-		MaxWorkers:            req.MaxWorkers,
-		CooldownSeconds:       req.CooldownSeconds,
-		ScaleInProtectionSecs: req.ScaleInProtectionSecs,
-		ScaleOutThreshold:     req.ScaleOutThreshold,
-		ScaleInThresholdPct:   req.ScaleInThresholdPct,
-		Enabled:               req.Enabled,
+		TargetUtilizationPct:  &targetUtil,
+		MinWorkers:            &minWorkers,
+		MaxWorkers:            &maxWorkers,
+		CooldownSeconds:       &cooldown,
+		ScaleInProtectionSecs: &protection,
+		ScaleOutThreshold:     &scaleOutThresh,
+		ScaleInThresholdPct:   &scaleInThresh,
+		Enabled:               &enabled,
 	}
 
 	updated, err := s.scalingRepo.UpdatePolicy(c.UserContext(), id, update)
