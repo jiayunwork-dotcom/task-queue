@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -28,6 +29,7 @@ type ScalingPolicyCreate struct {
 	ScaleOutThreshold     int
 	ScaleInThresholdPct   float64
 	Enabled               bool
+	ScheduleWindows       []models.ScheduleWindow
 }
 
 type ScalingPolicyUpdate struct {
@@ -39,6 +41,7 @@ type ScalingPolicyUpdate struct {
 	ScaleOutThreshold     *int
 	ScaleInThresholdPct   *float64
 	Enabled               *bool
+	ScheduleWindows       *[]models.ScheduleWindow
 }
 
 type ScalingHistoryFilter struct {
@@ -50,8 +53,49 @@ type ScalingHistoryFilter struct {
 	Offset   int
 }
 
+func encodeScheduleWindows(windows []models.ScheduleWindow) json.RawMessage {
+	if windows == nil {
+		windows = []models.ScheduleWindow{}
+	}
+	b, _ := json.Marshal(windows)
+	return b
+}
+
+func decodeScheduleWindows(raw json.RawMessage) ([]models.ScheduleWindow, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []models.ScheduleWindow{}, nil
+	}
+	var windows []models.ScheduleWindow
+	if err := json.Unmarshal(raw, &windows); err != nil {
+		return nil, err
+	}
+	if windows == nil {
+		windows = []models.ScheduleWindow{}
+	}
+	return windows, nil
+}
+
+func scanScalingPolicy(row interface{ Scan(dest ...interface{}) error }) (*models.ScalingPolicy, error) {
+	var p models.ScalingPolicy
+	var scheduleWindowsRaw json.RawMessage
+	err := row.Scan(&p.ID, &p.TaskType, &p.TargetUtilizationPct,
+		&p.MinWorkers, &p.MaxWorkers, &p.CooldownSeconds,
+		&p.ScaleInProtectionSecs, &p.ScaleOutThreshold,
+		&p.ScaleInThresholdPct, &p.Enabled, &scheduleWindowsRaw, &p.LastOperationAt,
+		&p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.ScheduleWindows, _ = decodeScheduleWindows(scheduleWindowsRaw)
+	return &p, nil
+}
+
 func (r *ScalingRepository) CreatePolicy(ctx context.Context, c *ScalingPolicyCreate) (*models.ScalingPolicy, error) {
 	now := time.Now()
+	scheduleWindows := c.ScheduleWindows
+	if scheduleWindows == nil {
+		scheduleWindows = []models.ScheduleWindow{}
+	}
 	policy := &models.ScalingPolicy{
 		ID:                    uuid.New(),
 		TaskType:              c.TaskType,
@@ -63,20 +107,23 @@ func (r *ScalingRepository) CreatePolicy(ctx context.Context, c *ScalingPolicyCr
 		ScaleOutThreshold:     c.ScaleOutThreshold,
 		ScaleInThresholdPct:   c.ScaleInThresholdPct,
 		Enabled:               c.Enabled,
+		ScheduleWindows:       scheduleWindows,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
+
+	scheduleWindowsJSON := encodeScheduleWindows(policy.ScheduleWindows)
 
 	_, err := r.db.Pool.Exec(ctx,
 		`INSERT INTO scaling_policies (
 			id, task_type, target_utilization_pct, min_workers, max_workers,
 			cooldown_seconds, scale_in_protection_secs, scale_out_threshold,
-			scale_in_threshold_pct, enabled, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			scale_in_threshold_pct, enabled, schedule_windows, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		policy.ID, policy.TaskType, policy.TargetUtilizationPct, policy.MinWorkers,
 		policy.MaxWorkers, policy.CooldownSeconds, policy.ScaleInProtectionSecs,
 		policy.ScaleOutThreshold, policy.ScaleInThresholdPct, policy.Enabled,
-		policy.CreatedAt, policy.UpdatedAt,
+		scheduleWindowsJSON, policy.CreatedAt, policy.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -88,43 +135,25 @@ func (r *ScalingRepository) GetPolicy(ctx context.Context, id uuid.UUID) (*model
 	row := r.db.Pool.QueryRow(ctx,
 		`SELECT id, task_type, target_utilization_pct, min_workers, max_workers,
 			cooldown_seconds, scale_in_protection_secs, scale_out_threshold,
-			scale_in_threshold_pct, enabled, last_operation_at, created_at, updated_at
+			scale_in_threshold_pct, enabled, schedule_windows, last_operation_at, created_at, updated_at
 		 FROM scaling_policies WHERE id = $1`, id)
-	var policy models.ScalingPolicy
-	err := row.Scan(&policy.ID, &policy.TaskType, &policy.TargetUtilizationPct,
-		&policy.MinWorkers, &policy.MaxWorkers, &policy.CooldownSeconds,
-		&policy.ScaleInProtectionSecs, &policy.ScaleOutThreshold,
-		&policy.ScaleInThresholdPct, &policy.Enabled, &policy.LastOperationAt,
-		&policy.CreatedAt, &policy.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &policy, nil
+	return scanScalingPolicy(row)
 }
 
 func (r *ScalingRepository) GetPolicyByTaskType(ctx context.Context, taskType string) (*models.ScalingPolicy, error) {
 	row := r.db.Pool.QueryRow(ctx,
 		`SELECT id, task_type, target_utilization_pct, min_workers, max_workers,
 			cooldown_seconds, scale_in_protection_secs, scale_out_threshold,
-			scale_in_threshold_pct, enabled, last_operation_at, created_at, updated_at
+			scale_in_threshold_pct, enabled, schedule_windows, last_operation_at, created_at, updated_at
 		 FROM scaling_policies WHERE task_type = $1`, taskType)
-	var policy models.ScalingPolicy
-	err := row.Scan(&policy.ID, &policy.TaskType, &policy.TargetUtilizationPct,
-		&policy.MinWorkers, &policy.MaxWorkers, &policy.CooldownSeconds,
-		&policy.ScaleInProtectionSecs, &policy.ScaleOutThreshold,
-		&policy.ScaleInThresholdPct, &policy.Enabled, &policy.LastOperationAt,
-		&policy.CreatedAt, &policy.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &policy, nil
+	return scanScalingPolicy(row)
 }
 
 func (r *ScalingRepository) ListPolicies(ctx context.Context) ([]models.ScalingPolicy, error) {
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT id, task_type, target_utilization_pct, min_workers, max_workers,
 			cooldown_seconds, scale_in_protection_secs, scale_out_threshold,
-			scale_in_threshold_pct, enabled, last_operation_at, created_at, updated_at
+			scale_in_threshold_pct, enabled, schedule_windows, last_operation_at, created_at, updated_at
 		 FROM scaling_policies ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -133,16 +162,11 @@ func (r *ScalingRepository) ListPolicies(ctx context.Context) ([]models.ScalingP
 
 	policies := []models.ScalingPolicy{}
 	for rows.Next() {
-		var p models.ScalingPolicy
-		err := rows.Scan(&p.ID, &p.TaskType, &p.TargetUtilizationPct,
-			&p.MinWorkers, &p.MaxWorkers, &p.CooldownSeconds,
-			&p.ScaleInProtectionSecs, &p.ScaleOutThreshold,
-			&p.ScaleInThresholdPct, &p.Enabled, &p.LastOperationAt,
-			&p.CreatedAt, &p.UpdatedAt)
+		p, err := scanScalingPolicy(rows)
 		if err != nil {
 			return nil, err
 		}
-		policies = append(policies, p)
+		policies = append(policies, *p)
 	}
 	return policies, nil
 }
@@ -151,7 +175,7 @@ func (r *ScalingRepository) ListEnabledPolicies(ctx context.Context) ([]models.S
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT id, task_type, target_utilization_pct, min_workers, max_workers,
 			cooldown_seconds, scale_in_protection_secs, scale_out_threshold,
-			scale_in_threshold_pct, enabled, last_operation_at, created_at, updated_at
+			scale_in_threshold_pct, enabled, schedule_windows, last_operation_at, created_at, updated_at
 		 FROM scaling_policies WHERE enabled = true ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -160,16 +184,11 @@ func (r *ScalingRepository) ListEnabledPolicies(ctx context.Context) ([]models.S
 
 	policies := []models.ScalingPolicy{}
 	for rows.Next() {
-		var p models.ScalingPolicy
-		err := rows.Scan(&p.ID, &p.TaskType, &p.TargetUtilizationPct,
-			&p.MinWorkers, &p.MaxWorkers, &p.CooldownSeconds,
-			&p.ScaleInProtectionSecs, &p.ScaleOutThreshold,
-			&p.ScaleInThresholdPct, &p.Enabled, &p.LastOperationAt,
-			&p.CreatedAt, &p.UpdatedAt)
+		p, err := scanScalingPolicy(rows)
 		if err != nil {
 			return nil, err
 		}
-		policies = append(policies, p)
+		policies = append(policies, *p)
 	}
 	return policies, nil
 }
@@ -208,6 +227,9 @@ func (r *ScalingRepository) UpdatePolicy(ctx context.Context, id uuid.UUID, u *S
 	}
 	if u.Enabled != nil {
 		addSet("enabled = $%d", *u.Enabled)
+	}
+	if u.ScheduleWindows != nil {
+		addSet("schedule_windows = $%d", encodeScheduleWindows(*u.ScheduleWindows))
 	}
 
 	argIdx++

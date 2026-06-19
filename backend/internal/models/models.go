@@ -2,6 +2,9 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -415,20 +418,35 @@ const (
 	ScalingOpNoOp     ScalingOperationType = "no_op"
 )
 
+type ScheduleWindow struct {
+	Days       []int  `json:"days" db:"days"`
+	StartTime  string `json:"start_time" db:"start_time"`
+	EndTime    string `json:"end_time" db:"end_time"`
+}
+
+type ScalingEvent struct {
+	EventTime      time.Time           `json:"event_time"`
+	PolicyID       uuid.UUID           `json:"policy_id"`
+	TaskType       string              `json:"task_type"`
+	OperationType  ScalingOperationType `json:"operation_type"`
+	SuggestedCount int                 `json:"suggested_count"`
+}
+
 type ScalingPolicy struct {
-	ID                    uuid.UUID `json:"id" db:"id"`
-	TaskType              string    `json:"task_type" db:"task_type"`
-	TargetUtilizationPct  float64   `json:"target_utilization_pct" db:"target_utilization_pct"`
-	MinWorkers            int       `json:"min_workers" db:"min_workers"`
-	MaxWorkers            int       `json:"max_workers" db:"max_workers"`
-	CooldownSeconds       int       `json:"cooldown_seconds" db:"cooldown_seconds"`
-	ScaleInProtectionSecs int       `json:"scale_in_protection_secs" db:"scale_in_protection_secs"`
-	ScaleOutThreshold     int       `json:"scale_out_threshold" db:"scale_out_threshold"`
-	ScaleInThresholdPct   float64   `json:"scale_in_threshold_pct" db:"scale_in_threshold_pct"`
-	Enabled               bool      `json:"enabled" db:"enabled"`
-	LastOperationAt       *time.Time `json:"last_operation_at,omitempty" db:"last_operation_at"`
-	CreatedAt             time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at" db:"updated_at"`
+	ID                    uuid.UUID        `json:"id" db:"id"`
+	TaskType              string           `json:"task_type" db:"task_type"`
+	TargetUtilizationPct  float64          `json:"target_utilization_pct" db:"target_utilization_pct"`
+	MinWorkers            int              `json:"min_workers" db:"min_workers"`
+	MaxWorkers            int              `json:"max_workers" db:"max_workers"`
+	CooldownSeconds       int              `json:"cooldown_seconds" db:"cooldown_seconds"`
+	ScaleInProtectionSecs int              `json:"scale_in_protection_secs" db:"scale_in_protection_secs"`
+	ScaleOutThreshold     int              `json:"scale_out_threshold" db:"scale_out_threshold"`
+	ScaleInThresholdPct   float64          `json:"scale_in_threshold_pct" db:"scale_in_threshold_pct"`
+	Enabled               bool             `json:"enabled" db:"enabled"`
+	ScheduleWindows       []ScheduleWindow `json:"schedule_windows,omitempty" db:"schedule_windows"`
+	LastOperationAt       *time.Time       `json:"last_operation_at,omitempty" db:"last_operation_at"`
+	CreatedAt             time.Time        `json:"created_at" db:"created_at"`
+	UpdatedAt             time.Time        `json:"updated_at" db:"updated_at"`
 }
 
 type ScalingHistory struct {
@@ -452,4 +470,104 @@ type ScalingPolicyMetrics struct {
 	QueueWaiting   int       `json:"queue_waiting"`
 	LastOperationAt *time.Time `json:"last_operation_at,omitempty"`
 	SecondsSinceOp int       `json:"seconds_since_op"`
+}
+
+func ParseTimeStr(s string) (int, int, error) {
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid time format: %s", s)
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil || h < 0 || h > 23 {
+		return 0, 0, fmt.Errorf("invalid hour: %s", parts[0])
+	}
+	m, err := strconv.Atoi(parts[1])
+	if err != nil || m < 0 || m > 59 {
+		return 0, 0, fmt.Errorf("invalid minute: %s", parts[1])
+	}
+	return h, m, nil
+}
+
+func (w *ScheduleWindow) Contains(t time.Time) bool {
+	weekday := int(t.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+
+	dayMatch := false
+	for _, d := range w.Days {
+		if d == weekday {
+			dayMatch = true
+			break
+		}
+	}
+	if !dayMatch {
+		return false
+	}
+
+	startH, startM, err := ParseTimeStr(w.StartTime)
+	if err != nil {
+		return false
+	}
+	endH, endM, err := ParseTimeStr(w.EndTime)
+	if err != nil {
+		return false
+	}
+
+	startMinutes := startH*60 + startM
+	endMinutes := endH*60 + endM
+	currentMinutes := t.Hour()*60 + t.Minute()
+
+	return currentMinutes >= startMinutes && currentMinutes < endMinutes
+}
+
+func (p *ScalingPolicy) IsWithinScheduleWindow(t time.Time) bool {
+	if p.ScheduleWindows == nil || len(p.ScheduleWindows) == 0 {
+		return true
+	}
+	for _, w := range p.ScheduleWindows {
+		if w.Contains(t) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *ScalingPolicy) ScheduleWindowSummary() string {
+	if p.ScheduleWindows == nil || len(p.ScheduleWindows) == 0 {
+		return "Always"
+	}
+
+	dayNames := []string{"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+
+	parts := make([]string, 0, len(p.ScheduleWindows))
+	for _, w := range p.ScheduleWindows {
+		if len(w.Days) == 0 {
+			continue
+		}
+
+		dayStr := ""
+		if len(w.Days) == 7 {
+			dayStr = "Everyday"
+		} else if len(w.Days) == 5 && w.Days[0] == 1 && w.Days[4] == 5 {
+			dayStr = "Mon-Fri"
+		} else if len(w.Days) == 2 && w.Days[0] == 6 && w.Days[1] == 7 {
+			dayStr = "Sat-Sun"
+		} else {
+			dayNamesSelected := make([]string, 0, len(w.Days))
+			for _, d := range w.Days {
+				if d >= 1 && d <= 7 {
+					dayNamesSelected = append(dayNamesSelected, dayNames[d])
+				}
+			}
+			dayStr = strings.Join(dayNamesSelected, ",")
+		}
+
+		parts = append(parts, fmt.Sprintf("%s %s-%s", dayStr, w.StartTime, w.EndTime))
+	}
+
+	if len(parts) == 0 {
+		return "Always"
+	}
+	return strings.Join(parts, "; ")
 }

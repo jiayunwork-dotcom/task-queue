@@ -1,17 +1,51 @@
 <template>
   <div class="space-y-8">
+    <div class="fixed top-4 right-4 z-50 space-y-2">
+      <div
+        v-for="toast in toasts"
+        :key="toast.id"
+        class="px-4 py-3 rounded-lg shadow-lg border transition-all transform animate-fade-in"
+        :class="[
+          toast.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' :
+          toast.type === 'warning' ? 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200' :
+          'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+        ]"
+      >
+        <div class="flex items-center gap-2">
+          <Icon
+            :name="toast.type === 'success' ? 'i-heroicons-check-circle-16-solid' : 'i-heroicons-exclamation-triangle-16-solid'"
+            class="w-5 h-5"
+          />
+          <span class="text-sm font-medium">{{ toast.message }}</span>
+          <button @click="removeToast(toast.id)" class="ml-2 opacity-70 hover:opacity-100">
+            <Icon name="i-heroicons-x-mark-16-solid" class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+
     <section class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm">
       <div class="flex items-center justify-between mb-6">
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Scaling Policies</h3>
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Auto Scaling</h3>
           <p class="text-sm text-gray-500 mt-1">Configure auto-scaling policies for each task type</p>
         </div>
-        <UButton
-          icon="i-heroicons-plus-16-solid"
-          @click="openCreateModal"
-        >
-          New Policy
-        </UButton>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border"
+            :class="wsConnected
+              ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800'
+              : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800'"
+          >
+            <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-green-500' : 'bg-red-500 animate-pulse'"></span>
+            {{ wsConnected ? 'Connected' : 'Disconnected' }}
+          </div>
+          <UButton
+            icon="i-heroicons-plus-16-solid"
+            @click="openCreateModal"
+          >
+            New Policy
+          </UButton>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -30,6 +64,12 @@
                 <div>
                   <code class="text-sm font-medium text-gray-900 dark:text-white">{{ policy.task_type }}</code>
                   <p class="text-xs text-gray-500 mt-0.5">Target: {{ policy.target_utilization_pct }}% utilization</p>
+                  <p class="text-xs text-gray-500 mt-0.5">
+                    <span class="inline-flex items-center gap-1">
+                      <Icon name="i-heroicons-clock-16-solid" class="w-3 h-3" />
+                      {{ scheduleWindowSummary(policy.schedule_windows) }}
+                    </span>
+                  </p>
                 </div>
               </div>
               <div class="flex items-center gap-3" @click.stop>
@@ -117,6 +157,80 @@
                     type="number"
                     min="0"
                   />
+                </div>
+              </div>
+
+              <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <div class="flex items-center justify-between mb-3">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Schedule Windows</label>
+                  <UButton
+                    size="sm"
+                    variant="ghost"
+                    icon="i-heroicons-plus-16-solid"
+                    :disabled="!editForm.schedule_windows || editForm.schedule_windows.length >= 3"
+                    @click.stop="addWindow(editForm)"
+                  >
+                    Add Window
+                  </UButton>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Optional: Configure time windows when this policy is active. Leave empty for always active.</p>
+
+                <div v-if="editForm.schedule_windows && editForm.schedule_windows.length > 0" class="space-y-3">
+                  <div
+                    v-for="(window, idx) in editForm.schedule_windows"
+                    :key="idx"
+                    class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600"
+                  >
+                    <div class="flex items-center justify-between mb-2">
+                      <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Window {{ idx + 1 }}</span>
+                      <UButton
+                        size="xs"
+                        variant="ghost"
+                        color="red"
+                        icon="i-heroicons-trash-16-solid"
+                        @click.stop="removeWindow(editForm, idx)"
+                      >
+                        Remove
+                      </UButton>
+                    </div>
+                    <div class="space-y-2">
+                      <div>
+                        <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Days</label>
+                        <div class="flex flex-wrap gap-2">
+                          <label v-for="day in dayOptions" :key="day.value" class="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              :value="day.value"
+                              v-model="window.days"
+                              class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span class="text-xs text-gray-700 dark:text-gray-300">{{ day.label }}</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Start Time</label>
+                          <UInput
+                            v-model="window.start_time"
+                            type="time"
+                            size="sm"
+                          />
+                        </div>
+                        <div>
+                          <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">End Time</label>
+                          <UInput
+                            v-model="window.end_time"
+                            type="time"
+                            size="sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                  No schedule windows configured. Policy is always active.
                 </div>
               </div>
 
@@ -407,6 +521,81 @@
           />
         </div>
       </div>
+
+      <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+        <div class="flex items-center justify-between mb-3">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Schedule Windows</label>
+          <UButton
+            size="sm"
+            variant="ghost"
+            icon="i-heroicons-plus-16-solid"
+            :disabled="createForm.schedule_windows.length >= 3"
+            @click="addWindow(createForm)"
+          >
+            Add Window
+          </UButton>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">Optional: Configure time windows when this policy is active. Leave empty for always active.</p>
+
+        <div v-if="createForm.schedule_windows.length > 0" class="space-y-3">
+          <div
+            v-for="(window, idx) in createForm.schedule_windows"
+            :key="idx"
+            class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600"
+          >
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Window {{ idx + 1 }}</span>
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="red"
+                icon="i-heroicons-trash-16-solid"
+                @click="removeWindow(createForm, idx)"
+              >
+                Remove
+              </UButton>
+            </div>
+            <div class="space-y-2">
+              <div>
+                <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Days</label>
+                <div class="flex flex-wrap gap-2">
+                  <label v-for="day in dayOptions" :key="day.value" class="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      :value="day.value"
+                      v-model="window.days"
+                      class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span class="text-xs text-gray-700 dark:text-gray-300">{{ day.label }}</span>
+                  </label>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Start Time</label>
+                  <UInput
+                    v-model="window.start_time"
+                    type="time"
+                    size="sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">End Time</label>
+                  <UInput
+                    v-model="window.end_time"
+                    type="time"
+                    size="sm"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+          No schedule windows configured. Policy is always active.
+        </div>
+      </div>
+
       <div class="flex items-center gap-2">
         <UCheckbox v-model="createForm.enabled" id="create-enabled" />
         <label for="create-enabled" class="text-sm text-gray-700 dark:text-gray-300">Enable policy immediately</label>
@@ -441,10 +630,13 @@ import {
   deleteScalingPolicy,
   scalingOpLabel,
   scalingOpColor,
+  scheduleWindowSummary,
   formatDate as formatDateUtil,
   type ScalingPolicy,
   type ScalingPolicyMetrics,
   type ScalingHistory,
+  type ScheduleWindow,
+  type ScalingEvent,
 } from '~/composables/useApi'
 
 const policies = ref<ScalingPolicy[]>([])
@@ -466,10 +658,30 @@ const createForm = ref({
   scale_out_threshold: 10,
   scale_in_threshold_pct: 30,
   enabled: true,
+  schedule_windows: [] as ScheduleWindow[],
 })
 
 const showDeleteConfirm = ref(false)
 const deletingPolicyId = ref('')
+
+const dayOptions = [
+  { label: 'Mon', value: 1 },
+  { label: 'Tue', value: 2 },
+  { label: 'Wed', value: 3 },
+  { label: 'Thu', value: 4 },
+  { label: 'Fri', value: 5 },
+  { label: 'Sat', value: 6 },
+  { label: 'Sun', value: 7 },
+]
+
+const config = useRuntimeConfig()
+
+const wsConnected = ref(false)
+let ws: WebSocket | null = null
+let wsReconnectTimer: number | null = null
+
+const toasts = ref<Array<{ id: number; message: string; type: string }>>([])
+let toastId = 0
 
 const filterTaskType = ref('')
 const currentPage = ref(1)
@@ -522,7 +734,14 @@ function toggleExpand(policyId: string) {
   } else {
     const policy = policies.value.find(p => p.id === policyId)
     if (policy) {
-      editForm.value = { ...policy }
+      editForm.value = {
+        ...policy,
+        schedule_windows: (policy.schedule_windows || []).map(w => ({
+          days: [...w.days],
+          start_time: w.start_time,
+          end_time: w.end_time,
+        })),
+      }
     }
     expandedPolicyId.value = policyId
   }
@@ -539,8 +758,116 @@ function openCreateModal() {
     scale_out_threshold: 10,
     scale_in_threshold_pct: 30,
     enabled: true,
+    schedule_windows: [] as ScheduleWindow[],
   }
   showCreateModal.value = true
+}
+
+function addWindow(form: any) {
+  if (!form.schedule_windows) {
+    form.schedule_windows = []
+  }
+  if (form.schedule_windows.length >= 3) {
+    return
+  }
+  form.schedule_windows.push({
+    days: [],
+    start_time: '09:00',
+    end_time: '18:00',
+  })
+}
+
+function removeWindow(form: any, index: number) {
+  if (!form.schedule_windows) {
+    return
+  }
+  form.schedule_windows.splice(index, 1)
+}
+
+function addToast(message: string, type: string = 'info') {
+  const id = ++toastId
+  toasts.value.push({ id, message, type })
+  setTimeout(() => {
+    removeToast(id)
+  }, 5000)
+}
+
+function removeToast(id: number) {
+  const index = toasts.value.findIndex(t => t.id === id)
+  if (index !== -1) {
+    toasts.value.splice(index, 1)
+  }
+}
+
+function connectWebSocket() {
+  const apiBase = config.public.apiBase || ''
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsHost = apiBase ? apiBase.replace(/^https?:\/\//, '') : window.location.host
+  const wsUrl = `${wsProtocol}//${wsHost}/api/v1/auto-scaling/ws`
+
+  try {
+    ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      console.log('WebSocket connected')
+      wsConnected.value = true
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer)
+        wsReconnectTimer = null
+      }
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const data: ScalingEvent = JSON.parse(event.data)
+        console.log('Received scaling event:', data)
+
+        const opLabel = data.operation_type === 'scale_out' ? '扩容' : '缩容'
+        addToast(
+          `[${data.task_type}] 触发了${opLabel},建议调整 ${data.suggested_count} 个Worker`,
+          data.operation_type === 'scale_out' ? 'success' : 'warning'
+        )
+
+        loadMetrics()
+        loadHistory()
+      } catch (e) {
+        console.error('Failed to parse WebSocket message:', e)
+      }
+    }
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected')
+      wsConnected.value = false
+      ws = null
+
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer)
+      }
+      wsReconnectTimer = window.setTimeout(() => {
+        console.log('Attempting to reconnect WebSocket...')
+        connectWebSocket()
+      }, 10000)
+    }
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error)
+    }
+  } catch (e) {
+    console.error('Failed to create WebSocket:', e)
+    wsConnected.value = false
+  }
+}
+
+function disconnectWebSocket() {
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = null
+  }
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  wsConnected.value = false
 }
 
 async function createPolicy() {
@@ -662,9 +989,28 @@ onMounted(() => {
     loadMetrics()
     loadHistory()
   }, 5000)
+  connectWebSocket()
 })
 
 onUnmounted(() => {
   if (refreshInterval.value) clearInterval(refreshInterval.value)
+  disconnectWebSocket()
 })
 </script>
+
+<style>
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+</style>

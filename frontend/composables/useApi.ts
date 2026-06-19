@@ -700,6 +700,20 @@ export async function deleteAlertRule(id: string) {
 
 export type ScalingOperationType = 'scale_out' | 'scale_in' | 'no_op'
 
+export interface ScheduleWindow {
+  days: number[]
+  start_time: string
+  end_time: string
+}
+
+export interface ScalingEvent {
+  event_time: string
+  policy_id: string
+  task_type: string
+  operation_type: ScalingOperationType
+  suggested_count: number
+}
+
 export interface ScalingPolicy {
   id: string
   task_type: string
@@ -711,6 +725,7 @@ export interface ScalingPolicy {
   scale_out_threshold: number
   scale_in_threshold_pct: number
   enabled: boolean
+  schedule_windows?: ScheduleWindow[] | null
   last_operation_at?: string | null
   created_at: string
   updated_at: string
@@ -755,6 +770,47 @@ export function scalingOpColor(op: ScalingOperationType): string {
     no_op: 'gray',
   }
   return map[op] || 'gray'
+}
+
+export function scheduleWindowSummary(windows?: ScheduleWindow[] | null): string {
+  if (!windows || windows.length === 0) {
+    return 'Always'
+  }
+
+  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+  const parts: string[] = []
+  for (const w of windows) {
+    if (!w.days || w.days.length === 0) {
+      continue
+    }
+
+    let dayStr = ''
+    const sortedDays = [...w.days].sort((a, b) => a - b)
+
+    if (sortedDays.length === 7) {
+      dayStr = 'Everyday'
+    } else if (sortedDays.length === 5 && sortedDays[0] === 1 && sortedDays[4] === 5) {
+      dayStr = 'Mon-Fri'
+    } else if (sortedDays.length === 2 && sortedDays[0] === 6 && sortedDays[1] === 7) {
+      dayStr = 'Sat-Sun'
+    } else {
+      const dayNamesSelected: string[] = []
+      for (const d of sortedDays) {
+        if (d >= 1 && d <= 7) {
+          dayNamesSelected.push(dayNames[d])
+        }
+      }
+      dayStr = dayNamesSelected.join(',')
+    }
+
+    parts.push(`${dayStr} ${w.start_time}-${w.end_time}`)
+  }
+
+  if (parts.length === 0) {
+    return 'Always'
+  }
+  return parts.join('; ')
 }
 
 export function useScalingPolicies() {

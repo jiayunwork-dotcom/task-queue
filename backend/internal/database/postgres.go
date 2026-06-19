@@ -256,10 +256,12 @@ func (d *Database) Migrate(ctx context.Context) error {
 			scale_out_threshold INTEGER NOT NULL DEFAULT 10,
 			scale_in_threshold_pct DOUBLE PRECISION NOT NULL DEFAULT 30,
 			enabled BOOLEAN NOT NULL DEFAULT true,
+			schedule_windows JSONB NOT NULL DEFAULT '[]'::jsonb,
 			last_operation_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE scaling_policies ADD COLUMN IF NOT EXISTS schedule_windows JSONB NOT NULL DEFAULT '[]'::jsonb`,
 		`CREATE INDEX IF NOT EXISTS idx_scaling_policies_enabled ON scaling_policies(enabled)`,
 		`CREATE INDEX IF NOT EXISTS idx_scaling_policies_task_type ON scaling_policies(task_type)`,
 

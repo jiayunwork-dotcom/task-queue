@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
+	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -19,6 +21,7 @@ import (
 	"task-queue/internal/ratelimit"
 	"task-queue/internal/repository"
 	"task-queue/internal/retry"
+	ws "task-queue/internal/websocket"
 	"task-queue/internal/worker"
 )
 
@@ -59,6 +62,7 @@ type Server struct {
 	rateLimitConfigMgr RateLimitConfigManager
 	rateLimiter        RateLimiter
 	waitQueueStats     WaitQueueStats
+	wsHub              *ws.Hub
 }
 
 func NewServer(
@@ -82,6 +86,7 @@ func NewServer(
 	rateLimitConfigMgr RateLimitConfigManager,
 	rateLimiter RateLimiter,
 	waitQueueStats WaitQueueStats,
+	wsHub *ws.Hub,
 ) *Server {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
@@ -119,6 +124,7 @@ func NewServer(
 		rateLimitConfigMgr: rateLimitConfigMgr,
 		rateLimiter:        rateLimiter,
 		waitQueueStats:     waitQueueStats,
+		wsHub:              wsHub,
 	}
 
 	s.registerRoutes()
@@ -202,6 +208,11 @@ func (s *Server) registerRoutes() {
 	scaling.Patch("/policies/:id/toggle", s.ToggleScalingPolicy)
 	scaling.Get("/metrics", s.GetScalingMetrics)
 	scaling.Get("/history", s.ListScalingHistory)
+	scaling.Get("/ws", websocket.New(func(c *websocket.Conn) {
+		if s.wsHub != nil {
+			s.wsHub.HandleConnection(c)
+		}
+	}))
 
 	s.app.Get("/health", s.HealthCheck)
 }
@@ -1367,15 +1378,16 @@ func (s *Server) ListAlertHistory(c *fiber.Ctx) error {
 }
 
 type CreateScalingPolicyRequest struct {
-	TaskType              string  `json:"task_type" validate:"required"`
-	TargetUtilizationPct  float64 `json:"target_utilization_pct"`
-	MinWorkers            int     `json:"min_workers"`
-	MaxWorkers            int     `json:"max_workers"`
-	CooldownSeconds       int     `json:"cooldown_seconds"`
-	ScaleInProtectionSecs int     `json:"scale_in_protection_secs"`
-	ScaleOutThreshold     int     `json:"scale_out_threshold"`
-	ScaleInThresholdPct   float64 `json:"scale_in_threshold_pct"`
-	Enabled               *bool   `json:"enabled"`
+	TaskType              string                   `json:"task_type" validate:"required"`
+	TargetUtilizationPct  float64                  `json:"target_utilization_pct"`
+	MinWorkers            int                      `json:"min_workers"`
+	MaxWorkers            int                      `json:"max_workers"`
+	CooldownSeconds       int                      `json:"cooldown_seconds"`
+	ScaleInProtectionSecs int                      `json:"scale_in_protection_secs"`
+	ScaleOutThreshold     int                      `json:"scale_out_threshold"`
+	ScaleInThresholdPct   float64                  `json:"scale_in_threshold_pct"`
+	Enabled               *bool                    `json:"enabled"`
+	ScheduleWindows       []models.ScheduleWindow  `json:"schedule_windows,omitempty"`
 }
 
 func (s *Server) CreateScalingPolicy(c *fiber.Ctx) error {
@@ -1415,6 +1427,26 @@ func (s *Server) CreateScalingPolicy(c *fiber.Ctx) error {
 		enabled = *req.Enabled
 	}
 
+	if len(req.ScheduleWindows) > 3 {
+		return c.Status(400).JSON(fiber.Map{"error": "maximum 3 schedule windows allowed"})
+	}
+	for i, w := range req.ScheduleWindows {
+		if len(w.Days) == 0 {
+			return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: at least one day required", i+1)})
+		}
+		for _, d := range w.Days {
+			if d < 1 || d > 7 {
+				return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid day %d, must be 1-7", i+1, d)})
+			}
+		}
+		if _, _, err := models.ParseTimeStr(w.StartTime); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid start_time: %s", i+1, err.Error())})
+		}
+		if _, _, err := models.ParseTimeStr(w.EndTime); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid end_time: %s", i+1, err.Error())})
+		}
+	}
+
 	create := &repository.ScalingPolicyCreate{
 		TaskType:              req.TaskType,
 		TargetUtilizationPct:  req.TargetUtilizationPct,
@@ -1425,6 +1457,7 @@ func (s *Server) CreateScalingPolicy(c *fiber.Ctx) error {
 		ScaleOutThreshold:     req.ScaleOutThreshold,
 		ScaleInThresholdPct:   req.ScaleInThresholdPct,
 		Enabled:               enabled,
+		ScheduleWindows:       req.ScheduleWindows,
 	}
 
 	policy, err := s.scalingRepo.CreatePolicy(c.UserContext(), create)
@@ -1456,14 +1489,15 @@ func (s *Server) GetScalingPolicy(c *fiber.Ctx) error {
 }
 
 type UpdateScalingPolicyRequest struct {
-	TargetUtilizationPct  float64 `json:"target_utilization_pct"`
-	MinWorkers            int     `json:"min_workers"`
-	MaxWorkers            int     `json:"max_workers"`
-	CooldownSeconds       int     `json:"cooldown_seconds"`
-	ScaleInProtectionSecs int     `json:"scale_in_protection_secs"`
-	ScaleOutThreshold     int     `json:"scale_out_threshold"`
-	ScaleInThresholdPct   float64 `json:"scale_in_threshold_pct"`
-	Enabled               bool    `json:"enabled"`
+	TargetUtilizationPct  float64                 `json:"target_utilization_pct"`
+	MinWorkers            int                     `json:"min_workers"`
+	MaxWorkers            int                     `json:"max_workers"`
+	CooldownSeconds       int                     `json:"cooldown_seconds"`
+	ScaleInProtectionSecs int                     `json:"scale_in_protection_secs"`
+	ScaleOutThreshold     int                     `json:"scale_out_threshold"`
+	ScaleInThresholdPct   float64                 `json:"scale_in_threshold_pct"`
+	Enabled               bool                    `json:"enabled"`
+	ScheduleWindows       *[]models.ScheduleWindow `json:"schedule_windows,omitempty"`
 }
 
 func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
@@ -1515,6 +1549,34 @@ func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
 	if _, ok := raw["enabled"]; ok {
 		v := req.Enabled
 		update.Enabled = &v
+	}
+	if _, ok := raw["schedule_windows"]; ok {
+		if req.ScheduleWindows != nil {
+			windows := *req.ScheduleWindows
+			if len(windows) > 3 {
+				return c.Status(400).JSON(fiber.Map{"error": "maximum 3 schedule windows allowed"})
+			}
+			for i, w := range windows {
+				if len(w.Days) == 0 {
+					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: at least one day required", i+1)})
+				}
+				for _, d := range w.Days {
+					if d < 1 || d > 7 {
+						return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid day %d, must be 1-7", i+1, d)})
+					}
+				}
+				if _, _, err := models.ParseTimeStr(w.StartTime); err != nil {
+					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid start_time: %s", i+1, err.Error())})
+				}
+				if _, _, err := models.ParseTimeStr(w.EndTime); err != nil {
+					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid end_time: %s", i+1, err.Error())})
+				}
+			}
+			update.ScheduleWindows = &windows
+		} else {
+			emptyWindows := []models.ScheduleWindow{}
+			update.ScheduleWindows = &emptyWindows
+		}
 	}
 
 	updated, err := s.scalingRepo.UpdatePolicy(c.UserContext(), id, update)

@@ -27,6 +27,7 @@ import (
 	"task-queue/internal/repository"
 	"task-queue/internal/retry"
 	"task-queue/internal/tracing"
+	ws "task-queue/internal/websocket"
 	"task-queue/internal/worker"
 )
 
@@ -164,10 +165,14 @@ func main() {
 	scalingEngine := autoscaling.NewEngine(scalingRepo, workerRepo, handlerRepo, taskRepo)
 	scalingEngine.Start(ctx)
 
+	wsHub := ws.NewHub()
+	go wsHub.Run()
+	scalingEngine.SetEventNotifier(wsHub)
+
 	server := api.NewServer(
 		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo, traceRepo, alertRepo,
 		scalingRepo, auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine,
-		metricsColl, scalingEngine, rateLimitConfigMgr, rateLimiter, waitQueue)
+		metricsColl, scalingEngine, rateLimitConfigMgr, rateLimiter, waitQueue, wsHub)
 
 	go registerInternalHandlers(cfg, handlerRepo, selfWorker)
 

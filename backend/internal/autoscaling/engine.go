@@ -11,11 +11,16 @@ import (
 	"task-queue/internal/repository"
 )
 
+type ScalingEventBroadcaster interface {
+	BroadcastScalingEvent(event *models.ScalingEvent)
+}
+
 type Engine struct {
-	scalingRepo *repository.ScalingRepository
-	workerRepo  *repository.WorkerRepository
-	handlerRepo *repository.HandlerRepository
-	taskRepo    *repository.TaskRepository
+	scalingRepo   *repository.ScalingRepository
+	workerRepo    *repository.WorkerRepository
+	handlerRepo   *repository.HandlerRepository
+	taskRepo      *repository.TaskRepository
+	eventNotifier ScalingEventBroadcaster
 
 	wg     sync.WaitGroup
 	stopCh chan struct{}
@@ -34,6 +39,10 @@ func NewEngine(
 		taskRepo:    taskRepo,
 		stopCh:      make(chan struct{}),
 	}
+}
+
+func (e *Engine) SetEventNotifier(notifier ScalingEventBroadcaster) {
+	e.eventNotifier = notifier
 }
 
 func (e *Engine) Start(ctx context.Context) {
@@ -140,12 +149,33 @@ func (e *Engine) getTaskTypeMetrics(ctx context.Context, taskType string) (*Task
 }
 
 func (e *Engine) evaluatePolicy(ctx context.Context, policy *models.ScalingPolicy) {
+	now := time.Now()
+
+	if !policy.IsWithinScheduleWindow(now) {
+		metrics, err := e.getTaskTypeMetrics(ctx, policy.TaskType)
+		if err != nil {
+			return
+		}
+		history := &models.ScalingHistory{
+			PolicyID:        policy.ID,
+			TaskType:        policy.TaskType,
+			OperationType:   models.ScalingOpNoOp,
+			Reason:          "Outside schedule window",
+			SuggestedCount:  0,
+			SnapshotWorkers: metrics.WorkerCount,
+			SnapshotUtilPct: metrics.UtilPct,
+			SnapshotQueue:   metrics.QueueWaiting,
+			CreatedAt:       now,
+		}
+		_ = e.scalingRepo.InsertHistory(ctx, history)
+		return
+	}
+
 	metrics, err := e.getTaskTypeMetrics(ctx, policy.TaskType)
 	if err != nil {
 		return
 	}
 
-	now := time.Now()
 	secondsSinceOp := -1
 	if policy.LastOperationAt != nil {
 		secondsSinceOp = int(now.Sub(*policy.LastOperationAt).Seconds())
@@ -246,6 +276,17 @@ func (e *Engine) evaluatePolicy(ctx context.Context, policy *models.ScalingPolic
 		CreatedAt:       now,
 	}
 	_ = e.scalingRepo.InsertHistory(ctx, history)
+
+	if opType != models.ScalingOpNoOp && e.eventNotifier != nil {
+		event := &models.ScalingEvent{
+			EventTime:      now,
+			PolicyID:       policy.ID,
+			TaskType:       policy.TaskType,
+			OperationType:  opType,
+			SuggestedCount: suggestedCount,
+		}
+		e.eventNotifier.BroadcastScalingEvent(event)
+	}
 }
 
 func (e *Engine) getWorkersForTaskType(ctx context.Context, taskType string) ([]models.Worker, error) {
