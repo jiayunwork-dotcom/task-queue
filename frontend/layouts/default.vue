@@ -55,9 +55,13 @@
             <p class="text-sm text-gray-500 mt-0.5">{{ pageSubtitle }}</p>
           </div>
           <div class="flex items-center gap-4">
-            <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-              Connected
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border"
+              :class="wsConnected
+                ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800'
+                : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800'"
+            >
+              <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-green-500' : 'bg-red-500 animate-pulse'"></span>
+              {{ wsConnected ? 'Connected' : 'Disconnected' }}
             </div>
             <UButton
               variant="ghost"
@@ -81,6 +85,8 @@
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
 const route = useRoute()
+
+const wsConnected = useState<boolean>('ws-connected', () => true)
 
 interface NavItem {
   to: string

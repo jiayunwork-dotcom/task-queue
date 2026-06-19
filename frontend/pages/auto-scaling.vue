@@ -31,14 +31,6 @@
           <p class="text-sm text-gray-500 mt-1">Configure auto-scaling policies for each task type</p>
         </div>
         <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border"
-            :class="wsConnected
-              ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800'
-              : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800'"
-          >
-            <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-green-500' : 'bg-red-500 animate-pulse'"></span>
-            {{ wsConnected ? 'Connected' : 'Disconnected' }}
-          </div>
           <UButton
             icon="i-heroicons-plus-16-solid"
             @click="openCreateModal"
@@ -168,7 +160,7 @@
                     variant="ghost"
                     icon="i-heroicons-plus-16-solid"
                     :disabled="!editForm.schedule_windows || editForm.schedule_windows.length >= 3"
-                    @click.stop="addWindow(editForm)"
+                    @click.stop="addEditWindow"
                   >
                     Add Window
                   </UButton>
@@ -188,7 +180,7 @@
                         variant="ghost"
                         color="red"
                         icon="i-heroicons-trash-16-solid"
-                        @click.stop="removeWindow(editForm, idx)"
+                        @click.stop="removeEditWindow(idx)"
                       >
                         Remove
                       </UButton>
@@ -530,7 +522,7 @@
             variant="ghost"
             icon="i-heroicons-plus-16-solid"
             :disabled="createForm.schedule_windows.length >= 3"
-            @click="addWindow(createForm)"
+            @click="addCreateWindow"
           >
             Add Window
           </UButton>
@@ -550,7 +542,7 @@
                 variant="ghost"
                 color="red"
                 icon="i-heroicons-trash-16-solid"
-                @click="removeWindow(createForm, idx)"
+                @click="removeCreateWindow(idx)"
               >
                 Remove
               </UButton>
@@ -676,7 +668,7 @@ const dayOptions = [
 
 const config = useRuntimeConfig()
 
-const wsConnected = ref(false)
+const wsConnected = useState<boolean>('ws-connected', () => true)
 let ws: WebSocket | null = null
 let wsReconnectTimer: number | null = null
 
@@ -763,25 +755,56 @@ function openCreateModal() {
   showCreateModal.value = true
 }
 
-function addWindow(form: any) {
-  if (!form.schedule_windows) {
-    form.schedule_windows = []
+function addEditWindow() {
+  if (!editForm.value.schedule_windows) {
+    editForm.value.schedule_windows = []
   }
-  if (form.schedule_windows.length >= 3) {
+  if (editForm.value.schedule_windows.length >= 3) {
     return
   }
-  form.schedule_windows.push({
-    days: [],
-    start_time: '09:00',
-    end_time: '18:00',
-  })
+  editForm.value.schedule_windows = [
+    ...editForm.value.schedule_windows,
+    {
+      days: [],
+      start_time: '09:00',
+      end_time: '18:00',
+    },
+  ]
 }
 
-function removeWindow(form: any, index: number) {
-  if (!form.schedule_windows) {
+function removeEditWindow(index: number) {
+  if (!editForm.value.schedule_windows) {
     return
   }
-  form.schedule_windows.splice(index, 1)
+  editForm.value.schedule_windows = editForm.value.schedule_windows.filter(
+    (_: any, i: number) => i !== index,
+  )
+}
+
+function addCreateWindow() {
+  if (!createForm.value.schedule_windows) {
+    createForm.value.schedule_windows = []
+  }
+  if (createForm.value.schedule_windows.length >= 3) {
+    return
+  }
+  createForm.value.schedule_windows = [
+    ...createForm.value.schedule_windows,
+    {
+      days: [],
+      start_time: '09:00',
+      end_time: '18:00',
+    },
+  ]
+}
+
+function removeCreateWindow(index: number) {
+  if (!createForm.value.schedule_windows) {
+    return
+  }
+  createForm.value.schedule_windows = createForm.value.schedule_windows.filter(
+    (_: any, i: number) => i !== index,
+  )
 }
 
 function addToast(message: string, type: string = 'info') {
@@ -800,9 +823,8 @@ function removeToast(id: number) {
 }
 
 function connectWebSocket() {
-  const apiBase = config.public.apiBase || ''
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsHost = apiBase ? apiBase.replace(/^https?:\/\//, '') : window.location.host
+  const wsHost = window.location.host
   const wsUrl = `${wsProtocol}//${wsHost}/api/v1/auto-scaling/ws`
 
   try {
