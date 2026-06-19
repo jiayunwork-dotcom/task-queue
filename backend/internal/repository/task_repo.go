@@ -411,14 +411,48 @@ func (r *TaskRepository) ExecHistory(ctx context.Context, sql string, args ...in
 }
 
 func (r *TaskRepository) GetDurationHeatmap(ctx context.Context, days int, taskType string) (*models.DurationHeatmapData, error) {
+	data, err := r.getDurationHeatmapForPeriod(ctx, days, 0, taskType)
+	if err != nil {
+		return nil, err
+	}
+	detectAnomalies(data)
+	return data, nil
+}
+
+func (r *TaskRepository) GetDurationHeatmapCompare(ctx context.Context, days int, taskType string) (*models.DurationHeatmapCompareData, error) {
+	if days <= 0 {
+		days = 7
+	}
+
+	current, err := r.getDurationHeatmapForPeriod(ctx, days, 0, taskType)
+	if err != nil {
+		return nil, err
+	}
+
+	previous, err := r.getDurationHeatmapForPeriod(ctx, days, days, taskType)
+	if err != nil {
+		return nil, err
+	}
+
+	detectAnomalies(current)
+	detectAnomalies(previous)
+
+	return &models.DurationHeatmapCompareData{
+		Current:  current,
+		Previous: previous,
+	}, nil
+}
+
+func (r *TaskRepository) getDurationHeatmapForPeriod(ctx context.Context, days int, offsetDays int, taskType string) (*models.DurationHeatmapData, error) {
 	if days <= 0 {
 		days = 7
 	}
 
 	where := `WHERE ended_at IS NOT NULL AND status IN ('success', 'failed')
-		AND ended_at >= NOW() - $1 * INTERVAL '1 day'`
-	args := []interface{}{days}
-	argIdx := 2
+		AND ended_at >= NOW() - ($1 + $2) * INTERVAL '1 day'
+		AND ended_at < NOW() - $2 * INTERVAL '1 day'`
+	args := []interface{}{days, offsetDays}
+	argIdx := 3
 
 	if taskType != "" {
 		where += fmt.Sprintf(" AND task_id IN (SELECT id FROM tasks WHERE type = $%d)", argIdx)
@@ -465,9 +499,10 @@ func (r *TaskRepository) GetDurationHeatmap(ctx context.Context, days int, taskT
 	}
 
 	now := time.Now()
+	refDate := now.AddDate(0, 0, -offsetDays)
 	dates := make([]string, days)
 	for i := 0; i < days; i++ {
-		d := now.AddDate(0, 0, -days+1+i)
+		d := refDate.AddDate(0, 0, -days+1+i)
 		dates[i] = d.Format("2006-01-02")
 	}
 
@@ -502,6 +537,7 @@ func (r *TaskRepository) GetDurationHeatmap(ctx context.Context, days int, taskT
 			P95Ms:      int64(c.P95),
 			P99Ms:      int64(c.P99),
 			SampleSize: c.SampleSize,
+			IsAnomaly:  false,
 		}
 	}
 
@@ -511,6 +547,71 @@ func (r *TaskRepository) GetDurationHeatmap(ctx context.Context, days int, taskT
 		Hours:    hours,
 		Matrix:   matrix,
 	}, nil
+}
+
+func detectAnomalies(data *models.DurationHeatmapData) {
+	if data == nil || data.Matrix == nil {
+		return
+	}
+
+	days := len(data.Dates)
+	hours := len(data.Hours)
+	if days == 0 || hours == 0 {
+		return
+	}
+
+	for di := 0; di < days; di++ {
+		for h := 0; h < hours; h++ {
+			cell := data.Matrix[h][di]
+			if cell == nil {
+				continue
+			}
+
+			cellP95 := float64(cell.P95Ms)
+
+			dayAvgP95 := 0.0
+			dayCount := 0
+			for oh := 0; oh < hours; oh++ {
+				if oh == h {
+					continue
+				}
+				otherCell := data.Matrix[oh][di]
+				if otherCell != nil {
+					dayAvgP95 += float64(otherCell.P95Ms)
+					dayCount++
+				}
+			}
+			dayAnomaly := false
+			if dayCount > 0 {
+				dayAvgP95 /= float64(dayCount)
+				if dayAvgP95 > 0 && cellP95 > dayAvgP95*3 {
+					dayAnomaly = true
+				}
+			}
+
+			hourAvgP95 := 0.0
+			hourCount := 0
+			for odi := 0; odi < days; odi++ {
+				if odi == di {
+					continue
+				}
+				otherCell := data.Matrix[h][odi]
+				if otherCell != nil {
+					hourAvgP95 += float64(otherCell.P95Ms)
+					hourCount++
+				}
+			}
+			hourAnomaly := false
+			if hourCount > 0 {
+				hourAvgP95 /= float64(hourCount)
+				if hourAvgP95 > 0 && cellP95 > hourAvgP95*3 {
+					hourAnomaly = true
+				}
+			}
+
+			cell.IsAnomaly = dayAnomaly || hourAnomaly
+		}
+	}
 }
 
 func (r *TaskRepository) GetDurationHistogram(ctx context.Context, timeFrom, timeTo time.Time, taskType string) (*models.DurationHistogramData, error) {
@@ -622,6 +723,23 @@ func (r *TaskRepository) GetDurationHistogram(ctx context.Context, timeFrom, tim
 		P90Ms:      p90Ms,
 		P95Ms:      p95Ms,
 		P99Ms:      p99Ms,
+	}, nil
+}
+
+func (r *TaskRepository) GetDurationHistogramCompare(ctx context.Context, firstFrom, firstTo, secondFrom, secondTo time.Time, taskType string) (*models.DurationHistogramCompareData, error) {
+	first, err := r.GetDurationHistogram(ctx, firstFrom, firstTo, taskType)
+	if err != nil {
+		return nil, err
+	}
+
+	second, err := r.GetDurationHistogram(ctx, secondFrom, secondTo, taskType)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.DurationHistogramCompareData{
+		First:  first,
+		Second: second,
 	}, nil
 }
 

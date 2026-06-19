@@ -375,6 +375,7 @@ export interface DurationHeatmapCell {
   p95_ms: number
   p99_ms: number
   sample_size: number
+  is_anomaly: boolean
 }
 
 export interface DurationHeatmapData {
@@ -382,6 +383,11 @@ export interface DurationHeatmapData {
   dates: string[]
   hours: number[]
   matrix: (DurationHeatmapCell | null)[][]
+}
+
+export interface DurationHeatmapCompareData {
+  current: DurationHeatmapData
+  previous: DurationHeatmapData
 }
 
 export interface DurationHistogramBucket {
@@ -405,6 +411,11 @@ export interface DurationHistogramData {
   p99_ms: number
 }
 
+export interface DurationHistogramCompareData {
+  first: DurationHistogramData
+  second: DurationHistogramData
+}
+
 export function useDurationHeatmap(params?: Record<string, any>) {
   return useApi<DurationHeatmapData>('/metrics/duration-heatmap', {
     query: params,
@@ -412,8 +423,22 @@ export function useDurationHeatmap(params?: Record<string, any>) {
   })
 }
 
+export function useDurationHeatmapCompare(params?: Record<string, any>) {
+  return useApi<DurationHeatmapCompareData>('/metrics/duration-heatmap', {
+    query: { ...params, compare: true },
+    method: 'GET',
+  })
+}
+
 export function useDurationHistogram(params?: Record<string, any>) {
   return useApi<DurationHistogramData>('/metrics/duration-histogram', {
+    query: params,
+    method: 'GET',
+  })
+}
+
+export function useDurationHistogramCompare(params?: Record<string, any>) {
+  return useApi<DurationHistogramCompareData>('/metrics/duration-histogram', {
     query: params,
     method: 'GET',
   })

@@ -780,6 +780,15 @@ func (s *Server) GetDurationHeatmap(c *fiber.Ctx) error {
 		days = 30
 	}
 	taskType := c.Query("type", "")
+	compare := c.QueryBool("compare", false)
+
+	if compare {
+		data, err := s.taskRepo.GetDurationHeatmapCompare(c.UserContext(), days, taskType)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(data)
+	}
 
 	data, err := s.taskRepo.GetDurationHeatmap(c.UserContext(), days, taskType)
 	if err != nil {
@@ -813,6 +822,30 @@ func (s *Server) GetDurationHistogram(c *fiber.Ctx) error {
 
 	if from.After(to) {
 		return c.Status(400).JSON(fiber.Map{"error": "from must be before to"})
+	}
+
+	compareFromStr := c.Query("compare_from", "")
+	compareToStr := c.Query("compare_to", "")
+
+	if compareFromStr != "" && compareToStr != "" {
+		var compareFrom, compareTo time.Time
+		compareFrom, err = time.Parse(time.RFC3339, compareFromStr)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid compare_from time"})
+		}
+		compareTo, err = time.Parse(time.RFC3339, compareToStr)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid compare_to time"})
+		}
+		if compareFrom.After(compareTo) {
+			return c.Status(400).JSON(fiber.Map{"error": "compare_from must be before compare_to"})
+		}
+
+		data, err := s.taskRepo.GetDurationHistogramCompare(ctx, from, to, compareFrom, compareTo, taskType)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(data)
 	}
 
 	data, err := s.taskRepo.GetDurationHistogram(ctx, from, to, taskType)

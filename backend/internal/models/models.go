@@ -366,6 +366,7 @@ type DurationHeatmapCell struct {
 	P95Ms      int64   `json:"p95_ms"`
 	P99Ms      int64   `json:"p99_ms"`
 	SampleSize int64   `json:"sample_size"`
+	IsAnomaly  bool    `json:"is_anomaly"`
 }
 
 type DurationHeatmapData struct {
@@ -373,6 +374,11 @@ type DurationHeatmapData struct {
 	Dates     []string               `json:"dates"`
 	Hours     []int                  `json:"hours"`
 	Matrix    [][]*DurationHeatmapCell `json:"matrix"`
+}
+
+type DurationHeatmapCompareData struct {
+	Current  *DurationHeatmapData `json:"current"`
+	Previous *DurationHeatmapData `json:"previous"`
 }
 
 type DurationHistogramBucket struct {
@@ -394,4 +400,9 @@ type DurationHistogramData struct {
 	P90Ms      int64                    `json:"p90_ms"`
 	P95Ms      int64                    `json:"p95_ms"`
 	P99Ms      int64                    `json:"p99_ms"`
+}
+
+type DurationHistogramCompareData struct {
+	First  *DurationHistogramData `json:"first"`
+	Second *DurationHistogramData `json:"second"`
 }
