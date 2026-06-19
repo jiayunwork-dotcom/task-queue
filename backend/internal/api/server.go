@@ -208,6 +208,13 @@ func (s *Server) registerRoutes() {
 	scaling.Patch("/policies/:id/toggle", s.ToggleScalingPolicy)
 	scaling.Get("/metrics", s.GetScalingMetrics)
 	scaling.Get("/history", s.ListScalingHistory)
+	scaling.Use("/ws", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
 	scaling.Get("/ws", websocket.New(func(c *websocket.Conn) {
 		if s.wsHub != nil {
 			s.wsHub.HandleConnection(c)
@@ -1387,7 +1394,7 @@ type CreateScalingPolicyRequest struct {
 	ScaleOutThreshold     int                      `json:"scale_out_threshold"`
 	ScaleInThresholdPct   float64                  `json:"scale_in_threshold_pct"`
 	Enabled               *bool                    `json:"enabled"`
-	ScheduleWindows       []models.ScheduleWindow  `json:"schedule_windows,omitempty"`
+	ScheduleWindows       []models.ScheduleWindow  `json:"schedule_windows"`
 }
 
 func (s *Server) CreateScalingPolicy(c *fiber.Ctx) error {
@@ -1497,7 +1504,7 @@ type UpdateScalingPolicyRequest struct {
 	ScaleOutThreshold     int                     `json:"scale_out_threshold"`
 	ScaleInThresholdPct   float64                 `json:"scale_in_threshold_pct"`
 	Enabled               bool                    `json:"enabled"`
-	ScheduleWindows       *[]models.ScheduleWindow `json:"schedule_windows,omitempty"`
+	ScheduleWindows       json.RawMessage         `json:"schedule_windows"`
 }
 
 func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
@@ -1506,7 +1513,7 @@ func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]json.RawMessage
 	if err := c.BodyParser(&raw); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -1550,33 +1557,36 @@ func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
 		v := req.Enabled
 		update.Enabled = &v
 	}
-	if _, ok := raw["schedule_windows"]; ok {
-		if req.ScheduleWindows != nil {
-			windows := *req.ScheduleWindows
-			if len(windows) > 3 {
-				return c.Status(400).JSON(fiber.Map{"error": "maximum 3 schedule windows allowed"})
+	if rawSW, ok := raw["schedule_windows"]; ok {
+		var windows []models.ScheduleWindow
+		if len(rawSW) > 0 && string(rawSW) != "null" {
+			if err := json.Unmarshal(rawSW, &windows); err != nil {
+				return c.Status(400).JSON(fiber.Map{"error": "invalid schedule_windows format"})
 			}
-			for i, w := range windows {
-				if len(w.Days) == 0 {
-					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: at least one day required", i+1)})
-				}
-				for _, d := range w.Days {
-					if d < 1 || d > 7 {
-						return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid day %d, must be 1-7", i+1, d)})
-					}
-				}
-				if _, _, err := models.ParseTimeStr(w.StartTime); err != nil {
-					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid start_time: %s", i+1, err.Error())})
-				}
-				if _, _, err := models.ParseTimeStr(w.EndTime); err != nil {
-					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid end_time: %s", i+1, err.Error())})
-				}
-			}
-			update.ScheduleWindows = &windows
-		} else {
-			emptyWindows := []models.ScheduleWindow{}
-			update.ScheduleWindows = &emptyWindows
 		}
+		if windows == nil {
+			windows = []models.ScheduleWindow{}
+		}
+		if len(windows) > 3 {
+			return c.Status(400).JSON(fiber.Map{"error": "maximum 3 schedule windows allowed"})
+		}
+		for i, w := range windows {
+			if len(w.Days) == 0 {
+				return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: at least one day required", i+1)})
+			}
+			for _, d := range w.Days {
+				if d < 1 || d > 7 {
+					return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid day %d, must be 1-7", i+1, d)})
+				}
+			}
+			if _, _, err := models.ParseTimeStr(w.StartTime); err != nil {
+				return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid start_time: %s", i+1, err.Error())})
+			}
+			if _, _, err := models.ParseTimeStr(w.EndTime); err != nil {
+				return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("schedule window %d: invalid end_time: %s", i+1, err.Error())})
+			}
+		}
+		update.ScheduleWindows = &windows
 	}
 
 	updated, err := s.scalingRepo.UpdatePolicy(c.UserContext(), id, update)
