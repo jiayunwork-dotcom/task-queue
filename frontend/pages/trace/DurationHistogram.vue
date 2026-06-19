@@ -105,7 +105,7 @@
         <div v-if="!compareMode" class="space-y-3">
           <div class="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
             <span class="text-sm text-gray-600 dark:text-gray-400">样本总数</span>
-            <span class="font-semibold">{{ data?.total_count.toLocaleString() }}</span>
+            <span class="font-semibold">{{ formatNumber(data?.total_count) }}</span>
           </div>
           <div class="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
             <span class="text-sm text-gray-600 dark:text-gray-400">平均值</span>
@@ -136,33 +136,33 @@
           </div>
           <div class="grid grid-cols-3 gap-2 py-2 border-b border-gray-200 dark:border-gray-700 items-center">
             <span class="text-sm text-gray-600 dark:text-gray-400">样本总数</span>
-            <span class="font-semibold text-right">{{ compareData?.first.total_count.toLocaleString() }}</span>
-            <span class="font-semibold text-right">{{ compareData?.second.total_count.toLocaleString() }}</span>
+            <span class="font-semibold text-right">{{ formatNumber(compareData?.first?.total_count) }}</span>
+            <span class="font-semibold text-right">{{ formatNumber(compareData?.second?.total_count) }}</span>
           </div>
           <div class="grid grid-cols-3 gap-2 py-2 border-b border-gray-200 dark:border-gray-700 items-center">
             <span class="text-sm text-gray-600 dark:text-gray-400">平均值</span>
-            <span class="font-semibold font-mono text-right">{{ formatDuration(compareData?.first.avg_ms) }}</span>
-            <span class="font-semibold font-mono text-right">{{ formatDuration(compareData?.second.avg_ms) }}</span>
+            <span class="font-semibold font-mono text-right">{{ formatDuration(compareData?.first?.avg_ms) }}</span>
+            <span class="font-semibold font-mono text-right">{{ formatDuration(compareData?.second?.avg_ms) }}</span>
           </div>
           <div class="grid grid-cols-3 gap-2 py-2 border-b border-gray-200 dark:border-gray-700 items-center">
             <span class="text-sm text-gray-600 dark:text-gray-400">P50</span>
-            <span class="font-semibold font-mono text-right text-blue-600 dark:text-blue-400">{{ formatDuration(compareData?.first.p50_ms) }}</span>
-            <span class="font-semibold font-mono text-right text-blue-600 dark:text-blue-400">{{ formatDuration(compareData?.second.p50_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-blue-600 dark:text-blue-400">{{ formatDuration(compareData?.first?.p50_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-blue-600 dark:text-blue-400">{{ formatDuration(compareData?.second?.p50_ms) }}</span>
           </div>
           <div class="grid grid-cols-3 gap-2 py-2 border-b border-gray-200 dark:border-gray-700 items-center">
             <span class="text-sm text-gray-600 dark:text-gray-400">P90</span>
-            <span class="font-semibold font-mono text-right text-amber-600 dark:text-amber-400">{{ formatDuration(compareData?.first.p90_ms) }}</span>
-            <span class="font-semibold font-mono text-right text-amber-600 dark:text-amber-400">{{ formatDuration(compareData?.second.p90_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-amber-600 dark:text-amber-400">{{ formatDuration(compareData?.first?.p90_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-amber-600 dark:text-amber-400">{{ formatDuration(compareData?.second?.p90_ms) }}</span>
           </div>
           <div class="grid grid-cols-3 gap-2 py-2 border-b border-gray-200 dark:border-gray-700 items-center">
             <span class="text-sm text-gray-600 dark:text-gray-400">P95</span>
-            <span class="font-semibold font-mono text-right text-orange-600 dark:text-orange-400">{{ formatDuration(compareData?.first.p95_ms) }}</span>
-            <span class="font-semibold font-mono text-right text-orange-600 dark:text-orange-400">{{ formatDuration(compareData?.second.p95_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-orange-600 dark:text-orange-400">{{ formatDuration(compareData?.first?.p95_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-orange-600 dark:text-orange-400">{{ formatDuration(compareData?.second?.p95_ms) }}</span>
           </div>
           <div class="grid grid-cols-3 gap-2 py-2 items-center">
             <span class="text-sm text-gray-600 dark:text-gray-400">P99</span>
-            <span class="font-semibold font-mono text-right text-red-600 dark:text-red-400">{{ formatDuration(compareData?.first.p99_ms) }}</span>
-            <span class="font-semibold font-mono text-right text-red-600 dark:text-red-400">{{ formatDuration(compareData?.second.p99_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-red-600 dark:text-red-400">{{ formatDuration(compareData?.first?.p99_ms) }}</span>
+            <span class="font-semibold font-mono text-right text-red-600 dark:text-red-400">{{ formatDuration(compareData?.second?.p99_ms) }}</span>
           </div>
         </div>
       </div>
@@ -232,21 +232,21 @@ const chartData = computed(() => {
   if (compareMode.value && compareData.value) {
     const first = compareData.value.first
     const second = compareData.value.second
-    const labels = first.buckets.map(b => b.range)
+    const labels = (first?.buckets || []).map(b => b.range)
     return {
       labels,
       datasets: [
         {
-          label: `时段1: ${formatDateRange(first.time_from, first.time_to)}`,
-          data: first.buckets.map(b => b.count),
+          label: `时段1: ${formatDateRange(first?.time_from || '', first?.time_to || '')}`,
+          data: (first?.buckets || []).map(b => b.count),
           backgroundColor: 'rgba(59, 130, 246, 0.8)',
           borderRadius: 4,
           barPercentage: 0.8,
           categoryPercentage: 0.8,
         },
         {
-          label: `时段2: ${formatDateRange(second.time_from, second.time_to)}`,
-          data: second.buckets.map(b => b.count),
+          label: `时段2: ${formatDateRange(second?.time_from || '', second?.time_to || '')}`,
+          data: (second?.buckets || []).map(b => b.count),
           backgroundColor: 'rgba(249, 115, 22, 0.6)',
           borderRadius: 4,
           barPercentage: 0.8,
@@ -298,19 +298,19 @@ const chartOptions = computed(() => {
             const datasetIndex = ctx.datasetIndex
             if (isCompare && compareData.value) {
               const d = datasetIndex === 0 ? compareData.value.first : compareData.value.second
-              const bucket = d.buckets[ctx.dataIndex]
+              const bucket = d?.buckets?.[ctx.dataIndex]
               if (!bucket) return ''
               return [
                 `${ctx.dataset.label || ''}`,
-                `数量: ${bucket.count.toLocaleString()}`,
-                `占比: ${bucket.percentage.toFixed(2)}%`,
+                `数量: ${formatNumber(bucket.count)}`,
+                `占比: ${(bucket.percentage || 0).toFixed(2)}%`,
               ]
             }
-            const bucket = data.value?.buckets[ctx.dataIndex]
+            const bucket = data.value?.buckets?.[ctx.dataIndex]
             if (!bucket) return ''
             return [
-              `数量: ${bucket.count.toLocaleString()}`,
-              `占比: ${bucket.percentage.toFixed(2)}%`,
+              `数量: ${formatNumber(bucket.count)}`,
+              `占比: ${(bucket.percentage || 0).toFixed(2)}%`,
             ]
           },
         },
@@ -339,6 +339,13 @@ function formatDateRange(from: string, to: string): string {
   const t = new Date(to)
   const format = (d: Date) => `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
   return `${format(f)} - ${format(t)}`
+}
+
+function formatNumber(n?: number | string | null): string {
+  if (n === null || n === undefined || n === '') return '-'
+  const num = Number(n)
+  if (isNaN(num)) return '-'
+  return num.toLocaleString()
 }
 
 function getTimeRange() {

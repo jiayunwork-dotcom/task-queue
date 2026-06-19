@@ -448,10 +448,14 @@ func (r *TaskRepository) getDurationHeatmapForPeriod(ctx context.Context, days i
 		days = 7
 	}
 
+	now := time.Now()
+	periodEnd := now.AddDate(0, 0, -offsetDays)
+	periodStart := periodEnd.AddDate(0, 0, -days)
+
 	where := `WHERE ended_at IS NOT NULL AND status IN ('success', 'failed')
-		AND ended_at >= NOW() - ($1 + $2) * INTERVAL '1 day'
-		AND ended_at < NOW() - $2 * INTERVAL '1 day'`
-	args := []interface{}{days, offsetDays}
+		AND ended_at >= $1
+		AND ended_at < $2`
+	args := []interface{}{periodStart, periodEnd}
 	argIdx := 3
 
 	if taskType != "" {
@@ -498,7 +502,6 @@ func (r *TaskRepository) getDurationHeatmapForPeriod(ctx context.Context, days i
 		cells = append(cells, c)
 	}
 
-	now := time.Now()
 	refDate := now.AddDate(0, 0, -offsetDays)
 	dates := make([]string, days)
 	for i := 0; i < days; i++ {
@@ -560,6 +563,8 @@ func detectAnomalies(data *models.DurationHeatmapData) {
 		return
 	}
 
+	const minAnomalyMs = 1000.0
+
 	for di := 0; di < days; di++ {
 		for h := 0; h < hours; h++ {
 			cell := data.Matrix[h][di]
@@ -584,7 +589,11 @@ func detectAnomalies(data *models.DurationHeatmapData) {
 			dayAnomaly := false
 			if dayCount > 0 {
 				dayAvgP95 /= float64(dayCount)
-				if dayAvgP95 > 0 && cellP95 > dayAvgP95*3 {
+				if dayAvgP95 > 0 {
+					if cellP95 > dayAvgP95*3 {
+						dayAnomaly = true
+					}
+				} else if cellP95 >= minAnomalyMs {
 					dayAnomaly = true
 				}
 			}
@@ -604,7 +613,11 @@ func detectAnomalies(data *models.DurationHeatmapData) {
 			hourAnomaly := false
 			if hourCount > 0 {
 				hourAvgP95 /= float64(hourCount)
-				if hourAvgP95 > 0 && cellP95 > hourAvgP95*3 {
+				if hourAvgP95 > 0 {
+					if cellP95 > hourAvgP95*3 {
+						hourAnomaly = true
+					}
+				} else if cellP95 >= minAnomalyMs {
 					hourAnomaly = true
 				}
 			}
