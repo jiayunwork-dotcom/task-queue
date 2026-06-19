@@ -100,6 +100,7 @@ const navItems = computed<NavItem[]>(() => [
   { to: '/dags', label: 'DAG Editor', icon: 'i-heroicons-swatch-20-solid' },
   { to: '/workers', label: 'Workers', icon: 'i-heroicons-server-stack-20-solid' },
   { to: '/rate-limit', label: 'Rate Limiting', icon: 'i-heroicons-gauge-20-solid' },
+  { to: '/auto-scaling', label: 'Auto Scaling', icon: 'i-heroicons-arrow-trending-up-20-solid' },
 ])
 
 const pageTitles: Record<string, { title: string; subtitle: string }> = {
@@ -110,6 +111,7 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
   '/dags': { title: 'DAG Orchestration', subtitle: 'Design and run task dependency graphs' },
   '/workers': { title: 'Worker Cluster', subtitle: 'Monitor and manage worker nodes' },
   '/rate-limit': { title: 'Rate Limiting', subtitle: 'Configure and monitor task execution rate limits' },
+  '/auto-scaling': { title: 'Auto Scaling', subtitle: 'Configure and monitor automatic worker scaling policies' },
 }
 
 const pageTitle = computed(() => pageTitles[route.path]?.title || 'Task Queue')

@@ -369,6 +369,17 @@ func (r *TaskRepository) FindReadyByPriority(ctx context.Context, priority model
 	return ids, nil
 }
 
+func (r *TaskRepository) CountReadyByType(ctx context.Context, taskType string) (int, error) {
+	var count int
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM tasks WHERE status = 'ready' AND type = $1`,
+		taskType).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r *TaskRepository) FindExpiredDelays(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	now := time.Now()
 	rows, err := r.db.Pool.Query(ctx,

@@ -244,6 +244,41 @@ func (d *Database) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_alert_history_triggered_at ON alert_history(triggered_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_history_rule_id ON alert_history(rule_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_history_rule_time ON alert_history(rule_id, triggered_at DESC)`,
+
+		`CREATE TABLE IF NOT EXISTS scaling_policies (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			task_type VARCHAR(255) NOT NULL UNIQUE,
+			target_utilization_pct DOUBLE PRECISION NOT NULL DEFAULT 70,
+			min_workers INTEGER NOT NULL DEFAULT 1,
+			max_workers INTEGER NOT NULL DEFAULT 10,
+			cooldown_seconds INTEGER NOT NULL DEFAULT 300,
+			scale_in_protection_secs INTEGER NOT NULL DEFAULT 600,
+			scale_out_threshold INTEGER NOT NULL DEFAULT 10,
+			scale_in_threshold_pct DOUBLE PRECISION NOT NULL DEFAULT 30,
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			last_operation_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scaling_policies_enabled ON scaling_policies(enabled)`,
+		`CREATE INDEX IF NOT EXISTS idx_scaling_policies_task_type ON scaling_policies(task_type)`,
+
+		`CREATE TABLE IF NOT EXISTS scaling_history (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			policy_id UUID NOT NULL REFERENCES scaling_policies(id) ON DELETE CASCADE,
+			task_type VARCHAR(255) NOT NULL,
+			operation_type VARCHAR(32) NOT NULL,
+			reason TEXT NOT NULL,
+			suggested_count INTEGER NOT NULL DEFAULT 0,
+			snapshot_workers INTEGER NOT NULL DEFAULT 0,
+			snapshot_util_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+			snapshot_queue INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scaling_history_created_at ON scaling_history(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_scaling_history_policy_id ON scaling_history(policy_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_scaling_history_task_type ON scaling_history(task_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_scaling_history_policy_time ON scaling_history(policy_id, created_at DESC)`,
 	}
 
 	for _, stmt := range statements {

@@ -406,3 +406,50 @@ type DurationHistogramCompareData struct {
 	First  *DurationHistogramData `json:"first"`
 	Second *DurationHistogramData `json:"second"`
 }
+
+type ScalingOperationType string
+
+const (
+	ScalingOpScaleOut ScalingOperationType = "scale_out"
+	ScalingOpScaleIn  ScalingOperationType = "scale_in"
+	ScalingOpNoOp     ScalingOperationType = "no_op"
+)
+
+type ScalingPolicy struct {
+	ID                    uuid.UUID `json:"id" db:"id"`
+	TaskType              string    `json:"task_type" db:"task_type"`
+	TargetUtilizationPct  float64   `json:"target_utilization_pct" db:"target_utilization_pct"`
+	MinWorkers            int       `json:"min_workers" db:"min_workers"`
+	MaxWorkers            int       `json:"max_workers" db:"max_workers"`
+	CooldownSeconds       int       `json:"cooldown_seconds" db:"cooldown_seconds"`
+	ScaleInProtectionSecs int       `json:"scale_in_protection_secs" db:"scale_in_protection_secs"`
+	ScaleOutThreshold     int       `json:"scale_out_threshold" db:"scale_out_threshold"`
+	ScaleInThresholdPct   float64   `json:"scale_in_threshold_pct" db:"scale_in_threshold_pct"`
+	Enabled               bool      `json:"enabled" db:"enabled"`
+	LastOperationAt       *time.Time `json:"last_operation_at,omitempty" db:"last_operation_at"`
+	CreatedAt             time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at" db:"updated_at"`
+}
+
+type ScalingHistory struct {
+	ID              uuid.UUID           `json:"id" db:"id"`
+	PolicyID        uuid.UUID           `json:"policy_id" db:"policy_id"`
+	TaskType        string              `json:"task_type" db:"task_type"`
+	OperationType   ScalingOperationType `json:"operation_type" db:"operation_type"`
+	Reason          string              `json:"reason" db:"reason"`
+	SuggestedCount  int                 `json:"suggested_count" db:"suggested_count"`
+	SnapshotWorkers int                 `json:"snapshot_workers" db:"snapshot_workers"`
+	SnapshotUtilPct float64             `json:"snapshot_util_pct" db:"snapshot_util_pct"`
+	SnapshotQueue   int                 `json:"snapshot_queue" db:"snapshot_queue"`
+	CreatedAt       time.Time           `json:"created_at" db:"created_at"`
+}
+
+type ScalingPolicyMetrics struct {
+	PolicyID       uuid.UUID `json:"policy_id"`
+	TaskType       string    `json:"task_type"`
+	CurrentWorkers int       `json:"current_workers"`
+	UtilizationPct float64   `json:"utilization_pct"`
+	QueueWaiting   int       `json:"queue_waiting"`
+	LastOperationAt *time.Time `json:"last_operation_at,omitempty"`
+	SecondsSinceOp int       `json:"seconds_since_op"`
+}

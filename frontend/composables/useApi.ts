@@ -697,3 +697,119 @@ export async function deleteAlertRule(id: string) {
     method: 'DELETE',
   })
 }
+
+export type ScalingOperationType = 'scale_out' | 'scale_in' | 'no_op'
+
+export interface ScalingPolicy {
+  id: string
+  task_type: string
+  target_utilization_pct: number
+  min_workers: number
+  max_workers: number
+  cooldown_seconds: number
+  scale_in_protection_secs: number
+  scale_out_threshold: number
+  scale_in_threshold_pct: number
+  enabled: boolean
+  last_operation_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ScalingHistory {
+  id: string
+  policy_id: string
+  task_type: string
+  operation_type: ScalingOperationType
+  reason: string
+  suggested_count: number
+  snapshot_workers: number
+  snapshot_util_pct: number
+  snapshot_queue: number
+  created_at: string
+}
+
+export interface ScalingPolicyMetrics {
+  policy_id: string
+  task_type: string
+  current_workers: number
+  utilization_pct: number
+  queue_waiting: number
+  last_operation_at?: string | null
+  seconds_since_op: number
+}
+
+export function scalingOpLabel(op: ScalingOperationType): string {
+  const map: Record<ScalingOperationType, string> = {
+    scale_out: '扩容',
+    scale_in: '缩容',
+    no_op: '无操作',
+  }
+  return map[op] || op
+}
+
+export function scalingOpColor(op: ScalingOperationType): string {
+  const map: Record<ScalingOperationType, string> = {
+    scale_out: 'green',
+    scale_in: 'red',
+    no_op: 'gray',
+  }
+  return map[op] || 'gray'
+}
+
+export function useScalingPolicies() {
+  return useApi<ScalingPolicy[]>('/auto-scaling/policies', {
+    method: 'GET',
+  })
+}
+
+export function useScalingPolicy(id: string) {
+  return useApi<ScalingPolicy>(`/auto-scaling/policies/${id}`)
+}
+
+export async function createScalingPolicy(data: any) {
+  const config = useRuntimeConfig()
+  return await $fetch<ScalingPolicy>('/auto-scaling/policies', {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'POST',
+    body: data,
+  })
+}
+
+export async function updateScalingPolicy(id: string, data: any) {
+  const config = useRuntimeConfig()
+  return await $fetch<ScalingPolicy>(`/auto-scaling/policies/${id}`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'PUT',
+    body: data,
+  })
+}
+
+export async function toggleScalingPolicy(id: string) {
+  const config = useRuntimeConfig()
+  return await $fetch<ScalingPolicy>(`/auto-scaling/policies/${id}/toggle`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'PATCH',
+  })
+}
+
+export async function deleteScalingPolicy(id: string) {
+  const config = useRuntimeConfig()
+  return await $fetch(`/auto-scaling/policies/${id}`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'DELETE',
+  })
+}
+
+export function useScalingMetrics() {
+  return useApi<ScalingPolicyMetrics[]>('/auto-scaling/metrics', {
+    method: 'GET',
+  })
+}
+
+export function useScalingHistory(params?: Record<string, any>) {
+  return useApi<any>('/auto-scaling/history', {
+    query: params,
+    method: 'GET',
+  })
+}

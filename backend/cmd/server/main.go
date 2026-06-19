@@ -16,6 +16,7 @@ import (
 	"task-queue/internal/alerts"
 	"task-queue/internal/api"
 	"task-queue/internal/audit"
+	"task-queue/internal/autoscaling"
 	"task-queue/internal/cache"
 	"task-queue/internal/config"
 	"task-queue/internal/database"
@@ -67,6 +68,7 @@ func main() {
 	dagRepo := repository.NewDAGRepository(db)
 	traceRepo := repository.NewTraceRepository(db)
 	alertRepo := repository.NewAlertRepository(db)
+	scalingRepo := repository.NewScalingRepository(db)
 
 	traceLogger := tracing.NewLogger(traceRepo)
 	traceLogger.Start(ctx)
@@ -159,10 +161,13 @@ func main() {
 	alertDetector := alerts.NewDetector(alertRepo, db, nil)
 	alertDetector.Start(ctx)
 
+	scalingEngine := autoscaling.NewEngine(scalingRepo, workerRepo, handlerRepo, taskRepo)
+	scalingEngine.Start(ctx)
+
 	server := api.NewServer(
 		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo, traceRepo, alertRepo,
-		auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine, metricsColl,
-		rateLimitConfigMgr, rateLimiter, waitQueue)
+		scalingRepo, auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine,
+		metricsColl, scalingEngine, rateLimitConfigMgr, rateLimiter, waitQueue)
 
 	go registerInternalHandlers(cfg, handlerRepo, selfWorker)
 
@@ -194,6 +199,7 @@ func main() {
 
 	reaper.Stop()
 	alertDetector.Stop()
+	scalingEngine.Stop()
 	rateLimiter.Stop()
 	rateLimitStats.Stop()
 	rateLimitConfigMgr.Stop()

@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"task-queue/internal/audit"
+	"task-queue/internal/autoscaling"
 	"task-queue/internal/config"
 	"task-queue/internal/metrics"
 	"task-queue/internal/models"
@@ -46,6 +47,7 @@ type Server struct {
 	dagRepo            *repository.DAGRepository
 	traceRepo          *repository.TraceRepository
 	alertRepo          *repository.AlertRepository
+	scalingRepo        *repository.ScalingRepository
 	auditLog           *audit.Logger
 	scheduler          *queue.PriorityScheduler
 	delaySched         *queue.DelayScheduler
@@ -53,6 +55,7 @@ type Server struct {
 	retryEngine        *retry.Engine
 	dagEngine          *retry.DAGEngine
 	metrics            *metrics.Collector
+	scalingEngine      *autoscaling.Engine
 	rateLimitConfigMgr RateLimitConfigManager
 	rateLimiter        RateLimiter
 	waitQueueStats     WaitQueueStats
@@ -67,6 +70,7 @@ func NewServer(
 	dagRepo *repository.DAGRepository,
 	traceRepo *repository.TraceRepository,
 	alertRepo *repository.AlertRepository,
+	scalingRepo *repository.ScalingRepository,
 	auditLog *audit.Logger,
 	scheduler *queue.PriorityScheduler,
 	delaySched *queue.DelayScheduler,
@@ -74,6 +78,7 @@ func NewServer(
 	retryEngine *retry.Engine,
 	dagEngine *retry.DAGEngine,
 	metricsColl *metrics.Collector,
+	scalingEngine *autoscaling.Engine,
 	rateLimitConfigMgr RateLimitConfigManager,
 	rateLimiter RateLimiter,
 	waitQueueStats WaitQueueStats,
@@ -102,6 +107,7 @@ func NewServer(
 		dagRepo:            dagRepo,
 		traceRepo:          traceRepo,
 		alertRepo:          alertRepo,
+		scalingRepo:        scalingRepo,
 		auditLog:           auditLog,
 		scheduler:          scheduler,
 		delaySched:         delaySched,
@@ -109,6 +115,7 @@ func NewServer(
 		retryEngine:        retryEngine,
 		dagEngine:          dagEngine,
 		metrics:            metricsColl,
+		scalingEngine:      scalingEngine,
 		rateLimitConfigMgr: rateLimitConfigMgr,
 		rateLimiter:        rateLimiter,
 		waitQueueStats:     waitQueueStats,
@@ -185,6 +192,16 @@ func (s *Server) registerRoutes() {
 	alerts.Delete("/rules/:id", s.DeleteAlertRule)
 	alerts.Patch("/rules/:id/toggle", s.ToggleAlertRule)
 	alerts.Get("/history", s.ListAlertHistory)
+
+	scaling := api.Group("/auto-scaling")
+	scaling.Get("/policies", s.ListScalingPolicies)
+	scaling.Get("/policies/:id", s.GetScalingPolicy)
+	scaling.Post("/policies", s.CreateScalingPolicy)
+	scaling.Put("/policies/:id", s.UpdateScalingPolicy)
+	scaling.Delete("/policies/:id", s.DeleteScalingPolicy)
+	scaling.Patch("/policies/:id/toggle", s.ToggleScalingPolicy)
+	scaling.Get("/metrics", s.GetScalingMetrics)
+	scaling.Get("/history", s.ListScalingHistory)
 
 	s.app.Get("/health", s.HealthCheck)
 }
@@ -1338,6 +1355,221 @@ func (s *Server) ListAlertHistory(c *fiber.Ctx) error {
 	}
 
 	history, total, err := s.alertRepo.ListHistory(c.UserContext(), filter)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"items":  history,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+type CreateScalingPolicyRequest struct {
+	TaskType              string  `json:"task_type" validate:"required"`
+	TargetUtilizationPct  float64 `json:"target_utilization_pct"`
+	MinWorkers            int     `json:"min_workers"`
+	MaxWorkers            int     `json:"max_workers"`
+	CooldownSeconds       int     `json:"cooldown_seconds"`
+	ScaleInProtectionSecs int     `json:"scale_in_protection_secs"`
+	ScaleOutThreshold     int     `json:"scale_out_threshold"`
+	ScaleInThresholdPct   float64 `json:"scale_in_threshold_pct"`
+	Enabled               *bool   `json:"enabled"`
+}
+
+func (s *Server) CreateScalingPolicy(c *fiber.Ctx) error {
+	var req CreateScalingPolicyRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	if req.TaskType == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "task_type is required"})
+	}
+	if req.MinWorkers < 0 {
+		req.MinWorkers = 1
+	}
+	if req.MaxWorkers <= 0 {
+		req.MaxWorkers = 10
+	}
+	if req.MaxWorkers < req.MinWorkers {
+		return c.Status(400).JSON(fiber.Map{"error": "max_workers must be >= min_workers"})
+	}
+	if req.TargetUtilizationPct <= 0 || req.TargetUtilizationPct > 100 {
+		req.TargetUtilizationPct = 70
+	}
+	if req.CooldownSeconds <= 0 {
+		req.CooldownSeconds = 300
+	}
+	if req.ScaleInProtectionSecs <= 0 {
+		req.ScaleInProtectionSecs = 600
+	}
+	if req.ScaleOutThreshold <= 0 {
+		req.ScaleOutThreshold = 10
+	}
+	if req.ScaleInThresholdPct <= 0 || req.ScaleInThresholdPct >= 100 {
+		req.ScaleInThresholdPct = 30
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	create := &repository.ScalingPolicyCreate{
+		TaskType:              req.TaskType,
+		TargetUtilizationPct:  req.TargetUtilizationPct,
+		MinWorkers:            req.MinWorkers,
+		MaxWorkers:            req.MaxWorkers,
+		CooldownSeconds:       req.CooldownSeconds,
+		ScaleInProtectionSecs: req.ScaleInProtectionSecs,
+		ScaleOutThreshold:     req.ScaleOutThreshold,
+		ScaleInThresholdPct:   req.ScaleInThresholdPct,
+		Enabled:               enabled,
+	}
+
+	policy, err := s.scalingRepo.CreatePolicy(c.UserContext(), create)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	s.auditLog.Log("scaling_policy", policy.ID, "created", audit.WithRemoteAddr(c.IP()))
+	return c.Status(201).JSON(policy)
+}
+
+func (s *Server) ListScalingPolicies(c *fiber.Ctx) error {
+	policies, err := s.scalingRepo.ListPolicies(c.UserContext())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(policies)
+}
+
+func (s *Server) GetScalingPolicy(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	policy, err := s.scalingRepo.GetPolicy(c.UserContext(), id)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "policy not found"})
+	}
+	return c.JSON(policy)
+}
+
+type UpdateScalingPolicyRequest struct {
+	TargetUtilizationPct  *float64 `json:"target_utilization_pct"`
+	MinWorkers            *int     `json:"min_workers"`
+	MaxWorkers            *int     `json:"max_workers"`
+	CooldownSeconds       *int     `json:"cooldown_seconds"`
+	ScaleInProtectionSecs *int     `json:"scale_in_protection_secs"`
+	ScaleOutThreshold     *int     `json:"scale_out_threshold"`
+	ScaleInThresholdPct   *float64 `json:"scale_in_threshold_pct"`
+	Enabled               *bool    `json:"enabled"`
+}
+
+func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	var req UpdateScalingPolicyRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	update := &repository.ScalingPolicyUpdate{
+		TargetUtilizationPct:  req.TargetUtilizationPct,
+		MinWorkers:            req.MinWorkers,
+		MaxWorkers:            req.MaxWorkers,
+		CooldownSeconds:       req.CooldownSeconds,
+		ScaleInProtectionSecs: req.ScaleInProtectionSecs,
+		ScaleOutThreshold:     req.ScaleOutThreshold,
+		ScaleInThresholdPct:   req.ScaleInThresholdPct,
+		Enabled:               req.Enabled,
+	}
+
+	updated, err := s.scalingRepo.UpdatePolicy(c.UserContext(), id, update)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	s.auditLog.Log("scaling_policy", id, "updated", audit.WithRemoteAddr(c.IP()))
+	return c.JSON(updated)
+}
+
+func (s *Server) ToggleScalingPolicy(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	policy, err := s.scalingRepo.GetPolicy(c.UserContext(), id)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "policy not found"})
+	}
+	newEnabled := !policy.Enabled
+	update := &repository.ScalingPolicyUpdate{Enabled: &newEnabled}
+	updated, err := s.scalingRepo.UpdatePolicy(c.UserContext(), id, update)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	action := "disabled"
+	if newEnabled {
+		action = "enabled"
+	}
+	s.auditLog.Log("scaling_policy", id, action, audit.WithRemoteAddr(c.IP()))
+	return c.JSON(updated)
+}
+
+func (s *Server) DeleteScalingPolicy(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	if err := s.scalingRepo.DeletePolicy(c.UserContext(), id); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	s.auditLog.Log("scaling_policy", id, "deleted", audit.WithRemoteAddr(c.IP()))
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+func (s *Server) GetScalingMetrics(c *fiber.Ctx) error {
+	if s.scalingEngine == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "scaling engine not available"})
+	}
+	metrics, err := s.scalingEngine.GetPolicyMetrics(c.UserContext())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(metrics)
+}
+
+func (s *Server) ListScalingHistory(c *fiber.Ctx) error {
+	limit := c.QueryInt("limit", 50)
+	offset := c.QueryInt("offset", 0)
+	if limit > 500 {
+		limit = 500
+	}
+
+	filter := repository.ScalingHistoryFilter{
+		Limit:    limit,
+		Offset:   offset,
+		TaskType: c.Query("task_type", ""),
+	}
+	if from := c.Query("from"); from != "" {
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			filter.From = &t
+		}
+	}
+	if to := c.Query("to"); to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			filter.To = &t
+		}
+	}
+	if pid := c.Query("policy_id"); pid != "" {
+		if id, err := uuid.Parse(pid); err == nil {
+			filter.PolicyID = &id
+		}
+	}
+
+	history, total, err := s.scalingRepo.ListHistory(c.UserContext(), filter)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
