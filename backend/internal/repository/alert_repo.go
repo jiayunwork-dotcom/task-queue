@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"task-queue/internal/database"
 	"task-queue/internal/models"
 )
@@ -68,12 +69,21 @@ func (r *AlertRepository) CreateRule(ctx context.Context, c *AlertRuleCreate) (*
 		UpdatedAt:       now,
 	}
 
+	taskTypeVal := pgtype.Text{}
+	if c.TaskType != nil {
+		taskTypeVal = pgtype.Text{String: *c.TaskType, Valid: true}
+	}
+	webhookVal := pgtype.Text{}
+	if c.WebhookURL != nil {
+		webhookVal = pgtype.Text{String: *c.WebhookURL, Valid: true}
+	}
+
 	_, err := r.db.Pool.Exec(ctx,
 		`INSERT INTO alert_rules (id, name, task_type, condition_type, threshold, window_minutes,
 			cooldown_seconds, notify_type, webhook_url, enabled, created_at, updated_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		rule.ID, rule.Name, rule.TaskType, rule.ConditionType, rule.Threshold,
-		rule.WindowMinutes, rule.CooldownSeconds, rule.NotifyType, rule.WebhookURL,
+		rule.ID, rule.Name, taskTypeVal, rule.ConditionType, rule.Threshold,
+		rule.WindowMinutes, rule.CooldownSeconds, rule.NotifyType, webhookVal,
 		rule.Enabled, rule.CreatedAt, rule.UpdatedAt,
 	)
 	if err != nil {
@@ -149,66 +159,62 @@ func (r *AlertRepository) ListEnabledRules(ctx context.Context) ([]models.AlertR
 }
 
 func (r *AlertRepository) UpdateRule(ctx context.Context, id uuid.UUID, u *AlertRuleUpdate) (*models.AlertRule, error) {
-	sets := []string{"updated_at = NOW()"}
-	args := []interface{}{}
-	argIdx := 1
+	type column struct {
+		expr string
+		val  interface{}
+	}
+	cols := []column{{expr: "updated_at = NOW()", val: nil}}
 
 	if u.Name != nil {
-		sets = append(sets, fmt.Sprintf("name = $%d", argIdx+1))
-		args = append(args, *u.Name)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("name = $%d", len(cols)+1), val: *u.Name})
 	}
 	if u.TaskType != nil {
-		sets = append(sets, fmt.Sprintf("task_type = $%d", argIdx+1))
-		args = append(args, *u.TaskType)
-		argIdx++
+		// outer ptr non-nil means caller wants to update this col
+		t := pgtype.Text{}
+		if *u.TaskType != nil {
+			t = pgtype.Text{String: **u.TaskType, Valid: true}
+		}
+		cols = append(cols, column{expr: fmt.Sprintf("task_type = $%d", len(cols)+1), val: t})
 	}
 	if u.ConditionType != nil {
-		sets = append(sets, fmt.Sprintf("condition_type = $%d", argIdx+1))
-		args = append(args, *u.ConditionType)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("condition_type = $%d", len(cols)+1), val: string(*u.ConditionType)})
 	}
 	if u.Threshold != nil {
-		sets = append(sets, fmt.Sprintf("threshold = $%d", argIdx+1))
-		args = append(args, *u.Threshold)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("threshold = $%d", len(cols)+1), val: *u.Threshold})
 	}
 	if u.WindowMinutes != nil {
-		sets = append(sets, fmt.Sprintf("window_minutes = $%d", argIdx+1))
-		args = append(args, *u.WindowMinutes)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("window_minutes = $%d", len(cols)+1), val: *u.WindowMinutes})
 	}
 	if u.CooldownSeconds != nil {
-		sets = append(sets, fmt.Sprintf("cooldown_seconds = $%d", argIdx+1))
-		args = append(args, *u.CooldownSeconds)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("cooldown_seconds = $%d", len(cols)+1), val: *u.CooldownSeconds})
 	}
 	if u.NotifyType != nil {
-		sets = append(sets, fmt.Sprintf("notify_type = $%d", argIdx+1))
-		args = append(args, *u.NotifyType)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("notify_type = $%d", len(cols)+1), val: string(*u.NotifyType)})
 	}
 	if u.WebhookURL != nil {
-		sets = append(sets, fmt.Sprintf("webhook_url = $%d", argIdx+1))
-		args = append(args, *u.WebhookURL)
-		argIdx++
+		t := pgtype.Text{}
+		if *u.WebhookURL != nil {
+			t = pgtype.Text{String: **u.WebhookURL, Valid: true}
+		}
+		cols = append(cols, column{expr: fmt.Sprintf("webhook_url = $%d", len(cols)+1), val: t})
 	}
 	if u.Enabled != nil {
-		sets = append(sets, fmt.Sprintf("enabled = $%d", argIdx+1))
-		args = append(args, *u.Enabled)
-		argIdx++
+		cols = append(cols, column{expr: fmt.Sprintf("enabled = $%d", len(cols)+1), val: *u.Enabled})
 	}
 
 	setClause := ""
-	for i, s := range sets {
+	args := []interface{}{}
+	for i, c := range cols {
 		if i > 0 {
 			setClause += ", "
 		}
-		setClause += s
+		setClause += c.expr
+		if c.val != nil {
+			args = append(args, c.val)
+		}
 	}
-
 	args = append(args, id)
-	query := fmt.Sprintf(`UPDATE alert_rules SET %s WHERE id = $%d`, setClause, argIdx+1)
+	query := fmt.Sprintf(`UPDATE alert_rules SET %s WHERE id = $%d`, setClause, len(args))
 
 	_, err := r.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
@@ -234,14 +240,28 @@ func (r *AlertRepository) InsertHistory(ctx context.Context, h *models.AlertHist
 	if h.TriggeredAt.IsZero() {
 		h.TriggeredAt = time.Now()
 	}
+
+	taskTypeVal := pgtype.Text{}
+	if h.TaskType != nil {
+		taskTypeVal = pgtype.Text{String: *h.TaskType, Valid: true}
+	}
+	webhookVal := pgtype.Text{}
+	if h.WebhookURL != nil {
+		webhookVal = pgtype.Text{String: *h.WebhookURL, Valid: true}
+	}
+	webhookErrVal := pgtype.Text{}
+	if h.WebhookError != nil {
+		webhookErrVal = pgtype.Text{String: *h.WebhookError, Valid: true}
+	}
+
 	_, err := r.db.Pool.Exec(ctx,
 		`INSERT INTO alert_history (id, rule_id, rule_name, task_type, condition_type,
 			actual_value, threshold_value, comparison_description, webhook_url,
 			webhook_success, webhook_error, triggered_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		h.ID, h.RuleID, h.RuleName, h.TaskType, h.ConditionType,
-		h.ActualValue, h.ThresholdValue, h.ComparisonDescription, h.WebhookURL,
-		h.WebhookSuccess, h.WebhookError, h.TriggeredAt,
+		h.ID, h.RuleID, h.RuleName, taskTypeVal, h.ConditionType,
+		h.ActualValue, h.ThresholdValue, h.ComparisonDescription, webhookVal,
+		h.WebhookSuccess, webhookErrVal, h.TriggeredAt,
 	)
 	return err
 }

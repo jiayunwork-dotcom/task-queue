@@ -134,7 +134,7 @@
                 ></div>
                 <div
                   class="h-full bg-red-500"
-                  :style="{ width: `${snapshot?.failure_rates?.[level.key] || 0}%`"
+                  :style="{ width: `${snapshot?.failure_rates?.[level.key] || 0}%` }"
                 ></div>
               </div>
             </div>
