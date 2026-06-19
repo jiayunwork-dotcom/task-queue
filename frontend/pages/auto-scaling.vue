@@ -506,6 +506,7 @@ function getUtilizationBarClass(util: number): string {
 }
 
 function formatCooldown(seconds: number, cooldown: number): string {
+  if (seconds < 0) return 'Never'
   if (seconds >= cooldown) return 'Ready'
   return `${cooldown - seconds}s`
 }

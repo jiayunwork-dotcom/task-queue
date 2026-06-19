@@ -1471,29 +1471,50 @@ func (s *Server) UpdateScalingPolicy(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
 	}
+
+	var raw map[string]interface{}
+	if err := c.BodyParser(&raw); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+
 	var req UpdateScalingPolicyRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	targetUtil := req.TargetUtilizationPct
-	minWorkers := req.MinWorkers
-	maxWorkers := req.MaxWorkers
-	cooldown := req.CooldownSeconds
-	protection := req.ScaleInProtectionSecs
-	scaleOutThresh := req.ScaleOutThreshold
-	scaleInThresh := req.ScaleInThresholdPct
-	enabled := req.Enabled
+	update := &repository.ScalingPolicyUpdate{}
 
-	update := &repository.ScalingPolicyUpdate{
-		TargetUtilizationPct:  &targetUtil,
-		MinWorkers:            &minWorkers,
-		MaxWorkers:            &maxWorkers,
-		CooldownSeconds:       &cooldown,
-		ScaleInProtectionSecs: &protection,
-		ScaleOutThreshold:     &scaleOutThresh,
-		ScaleInThresholdPct:   &scaleInThresh,
-		Enabled:               &enabled,
+	if _, ok := raw["target_utilization_pct"]; ok {
+		v := req.TargetUtilizationPct
+		update.TargetUtilizationPct = &v
+	}
+	if _, ok := raw["min_workers"]; ok {
+		v := req.MinWorkers
+		update.MinWorkers = &v
+	}
+	if _, ok := raw["max_workers"]; ok {
+		v := req.MaxWorkers
+		update.MaxWorkers = &v
+	}
+	if _, ok := raw["cooldown_seconds"]; ok {
+		v := req.CooldownSeconds
+		update.CooldownSeconds = &v
+	}
+	if _, ok := raw["scale_in_protection_secs"]; ok {
+		v := req.ScaleInProtectionSecs
+		update.ScaleInProtectionSecs = &v
+	}
+	if _, ok := raw["scale_out_threshold"]; ok {
+		v := req.ScaleOutThreshold
+		update.ScaleOutThreshold = &v
+	}
+	if _, ok := raw["scale_in_threshold_pct"]; ok {
+		v := req.ScaleInThresholdPct
+		update.ScaleInThresholdPct = &v
+	}
+	if _, ok := raw["enabled"]; ok {
+		v := req.Enabled
+		update.Enabled = &v
 	}
 
 	updated, err := s.scalingRepo.UpdatePolicy(c.UserContext(), id, update)

@@ -146,12 +146,12 @@ func (e *Engine) evaluatePolicy(ctx context.Context, policy *models.ScalingPolic
 	}
 
 	now := time.Now()
-	secondsSinceOp := math.MaxInt32
+	secondsSinceOp := -1
 	if policy.LastOperationAt != nil {
 		secondsSinceOp = int(now.Sub(*policy.LastOperationAt).Seconds())
 	}
 
-	inCooldown := policy.LastOperationAt != nil && secondsSinceOp < policy.CooldownSeconds
+	inCooldown := policy.LastOperationAt != nil && secondsSinceOp >= 0 && secondsSinceOp < policy.CooldownSeconds
 
 	var opType models.ScalingOperationType
 	var reason string
@@ -232,20 +232,20 @@ func (e *Engine) evaluatePolicy(ctx context.Context, policy *models.ScalingPolic
 
 	if opType != models.ScalingOpNoOp {
 		_ = e.scalingRepo.UpdateLastOperation(ctx, policy.ID, now)
-
-		history := &models.ScalingHistory{
-			PolicyID:        policy.ID,
-			TaskType:        policy.TaskType,
-			OperationType:   opType,
-			Reason:          reason,
-			SuggestedCount:  suggestedCount,
-			SnapshotWorkers: metrics.WorkerCount,
-			SnapshotUtilPct: metrics.UtilPct,
-			SnapshotQueue:   metrics.QueueWaiting,
-			CreatedAt:       now,
-		}
-		_ = e.scalingRepo.InsertHistory(ctx, history)
 	}
+
+	history := &models.ScalingHistory{
+		PolicyID:        policy.ID,
+		TaskType:        policy.TaskType,
+		OperationType:   opType,
+		Reason:          reason,
+		SuggestedCount:  suggestedCount,
+		SnapshotWorkers: metrics.WorkerCount,
+		SnapshotUtilPct: metrics.UtilPct,
+		SnapshotQueue:   metrics.QueueWaiting,
+		CreatedAt:       now,
+	}
+	_ = e.scalingRepo.InsertHistory(ctx, history)
 }
 
 func (e *Engine) getWorkersForTaskType(ctx context.Context, taskType string) ([]models.Worker, error) {
@@ -288,7 +288,7 @@ func (e *Engine) GetPolicyMetrics(ctx context.Context) ([]models.ScalingPolicyMe
 			continue
 		}
 
-		secondsSinceOp := math.MaxInt32
+		secondsSinceOp := -1
 		if policy.LastOperationAt != nil {
 			secondsSinceOp = int(now.Sub(*policy.LastOperationAt).Seconds())
 		}
