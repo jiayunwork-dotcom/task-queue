@@ -96,6 +96,8 @@ func (d *Database) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_task_executions_task_id ON task_executions(task_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_executions_worker_id ON task_executions(worker_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_executions_started_at ON task_executions(started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_executions_ended_at ON task_executions(ended_at DESC) WHERE ended_at IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_task_executions_status_ended_at ON task_executions(status, ended_at DESC) WHERE ended_at IS NOT NULL`,
 
 		`CREATE TABLE IF NOT EXISTS workers (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

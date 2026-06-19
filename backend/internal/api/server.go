@@ -161,6 +161,8 @@ func (s *Server) registerRoutes() {
 	mon.Get("/snapshot", s.GetMetricsSnapshot)
 	mon.Get("/throughput-history", s.GetThroughputHistory)
 	mon.Get("/queue-depths", s.GetQueueDepths)
+	mon.Get("/duration-heatmap", s.GetDurationHeatmap)
+	mon.Get("/duration-histogram", s.GetDurationHistogram)
 
 	rl := api.Group("/rate-limit")
 	rl.Get("/configs", s.ListRateLimitConfigs)
@@ -767,6 +769,57 @@ func (s *Server) GetQueueDepths(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(depths)
+}
+
+func (s *Server) GetDurationHeatmap(c *fiber.Ctx) error {
+	days := c.QueryInt("days", 7)
+	if days <= 0 {
+		days = 7
+	}
+	if days > 30 {
+		days = 30
+	}
+	taskType := c.Query("type", "")
+
+	data, err := s.taskRepo.GetDurationHeatmap(c.UserContext(), days, taskType)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(data)
+}
+
+func (s *Server) GetDurationHistogram(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	taskType := c.Query("type", "")
+
+	var from, to time.Time
+	var err error
+	if fromStr := c.Query("from"); fromStr != "" {
+		from, err = time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid from time"})
+		}
+	} else {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if toStr := c.Query("to"); toStr != "" {
+		to, err = time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid to time"})
+		}
+	} else {
+		to = time.Now()
+	}
+
+	if from.After(to) {
+		return c.Status(400).JSON(fiber.Map{"error": "from must be before to"})
+	}
+
+	data, err := s.taskRepo.GetDurationHistogram(ctx, from, to, taskType)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(data)
 }
 
 func (s *Server) HealthCheck(c *fiber.Ctx) error {

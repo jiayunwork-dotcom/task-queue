@@ -409,3 +409,222 @@ func (r *TaskRepository) ExecHistory(ctx context.Context, sql string, args ...in
 	}
 	return res.RowsAffected(), nil
 }
+
+func (r *TaskRepository) GetDurationHeatmap(ctx context.Context, days int, taskType string) (*models.DurationHeatmapData, error) {
+	if days <= 0 {
+		days = 7
+	}
+
+	where := `WHERE ended_at IS NOT NULL AND status IN ('success', 'failed')
+		AND ended_at >= NOW() - ($1 || ' days')::INTERVAL`
+	args := []interface{}{days}
+	argIdx := 2
+
+	if taskType != "" {
+		where += fmt.Sprintf(" AND task_id IN (SELECT id FROM tasks WHERE type = $%d)", argIdx)
+		args = append(args, taskType)
+		argIdx++
+	}
+
+	sql := fmt.Sprintf(`
+		SELECT
+			EXTRACT(HOUR FROM ended_at)::INTEGER as hour,
+			DATE(ended_at) as date,
+			COUNT(*) as sample_size,
+			PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
+			PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) as p95,
+			PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms) as p99
+		FROM task_executions
+		%s
+		GROUP BY DATE(ended_at), EXTRACT(HOUR FROM ended_at)
+		ORDER BY date, hour
+	`, where)
+
+	rows, err := r.db.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type rawCell struct {
+		Hour       int
+		Date       time.Time
+		SampleSize int64
+		P50        float64
+		P95        float64
+		P99        float64
+	}
+
+	cells := []rawCell{}
+	for rows.Next() {
+		var c rawCell
+		if err := rows.Scan(&c.Hour, &c.Date, &c.SampleSize, &c.P50, &c.P95, &c.P99); err != nil {
+			return nil, err
+		}
+		cells = append(cells, c)
+	}
+
+	now := time.Now()
+	dates := make([]string, days)
+	for i := 0; i < days; i++ {
+		d := now.AddDate(0, 0, -days+1+i)
+		dates[i] = d.Format("2006-01-02")
+	}
+
+	hours := make([]int, 24)
+	for i := 0; i < 24; i++ {
+		hours[i] = i
+	}
+
+	dateIdx := make(map[string]int)
+	for i, d := range dates {
+		dateIdx[d] = i
+	}
+
+	matrix := make([][]*models.DurationHeatmapCell, 24)
+	for h := 0; h < 24; h++ {
+		matrix[h] = make([]*models.DurationHeatmapCell, days)
+	}
+
+	for _, c := range cells {
+		dateStr := c.Date.Format("2006-01-02")
+		di, ok := dateIdx[dateStr]
+		if !ok {
+			continue
+		}
+		if c.Hour < 0 || c.Hour > 23 {
+			continue
+		}
+		matrix[c.Hour][di] = &models.DurationHeatmapCell{
+			Hour:       c.Hour,
+			Date:       dateStr,
+			P50Ms:      int64(c.P50),
+			P95Ms:      int64(c.P95),
+			P99Ms:      int64(c.P99),
+			SampleSize: c.SampleSize,
+		}
+	}
+
+	return &models.DurationHeatmapData{
+		TaskType: taskType,
+		Dates:    dates,
+		Hours:    hours,
+		Matrix:   matrix,
+	}, nil
+}
+
+func (r *TaskRepository) GetDurationHistogram(ctx context.Context, timeFrom, timeTo time.Time, taskType string) (*models.DurationHistogramData, error) {
+	where := `WHERE ended_at IS NOT NULL AND status IN ('success', 'failed')
+		AND ended_at >= $1 AND ended_at <= $2`
+	args := []interface{}{timeFrom, timeTo}
+	argIdx := 3
+
+	if taskType != "" {
+		where += fmt.Sprintf(" AND task_id IN (SELECT id FROM tasks WHERE type = $%d)", argIdx)
+		args = append(args, taskType)
+		argIdx++
+	}
+
+	buckets := []struct {
+		Range      string
+		RangeStart int64
+		RangeEnd   *int64
+	}{
+		{Range: "0-100ms", RangeStart: 0, RangeEnd: int64Ptr(100)},
+		{Range: "100-500ms", RangeStart: 100, RangeEnd: int64Ptr(500)},
+		{Range: "500-1000ms", RangeStart: 500, RangeEnd: int64Ptr(1000)},
+		{Range: "1-5s", RangeStart: 1000, RangeEnd: int64Ptr(5000)},
+		{Range: "5-10s", RangeStart: 5000, RangeEnd: int64Ptr(10000)},
+		{Range: "10s以上", RangeStart: 10000, RangeEnd: nil},
+	}
+
+	var totalCount int64
+	countSql := fmt.Sprintf(`SELECT COUNT(*) FROM task_executions %s`, where)
+	if err := r.db.Pool.QueryRow(ctx, countSql, args...).Scan(&totalCount); err != nil {
+		return nil, err
+	}
+
+	histogramBuckets := make([]models.DurationHistogramBucket, 0, len(buckets))
+	for _, b := range buckets {
+		var count int64
+		var bucketSql string
+		if b.RangeEnd != nil {
+			bucketSql = fmt.Sprintf(`
+				SELECT COUNT(*) FROM task_executions
+				%s AND duration_ms >= $%d AND duration_ms < $%d
+			`, where, argIdx, argIdx+1)
+			bucketArgs := make([]interface{}, len(args))
+			copy(bucketArgs, args)
+			bucketArgs = append(bucketArgs, b.RangeStart, *b.RangeEnd)
+			if err := r.db.Pool.QueryRow(ctx, bucketSql, bucketArgs...).Scan(&count); err != nil {
+				return nil, err
+			}
+		} else {
+			bucketSql = fmt.Sprintf(`
+				SELECT COUNT(*) FROM task_executions
+				%s AND duration_ms >= $%d
+			`, where, argIdx)
+			bucketArgs := make([]interface{}, len(args))
+			copy(bucketArgs, args)
+			bucketArgs = append(bucketArgs, b.RangeStart)
+			if err := r.db.Pool.QueryRow(ctx, bucketSql, bucketArgs...).Scan(&count); err != nil {
+				return nil, err
+			}
+		}
+
+		percentage := 0.0
+		if totalCount > 0 {
+			percentage = float64(count) / float64(totalCount) * 100
+		}
+
+		histogramBuckets = append(histogramBuckets, models.DurationHistogramBucket{
+			Range:      b.Range,
+			RangeStart: b.RangeStart,
+			RangeEnd:   b.RangeEnd,
+			Count:      count,
+			Percentage: percentage,
+		})
+	}
+
+	var avgMs float64
+	var p50Ms, p90Ms, p95Ms, p99Ms int64
+
+	if totalCount > 0 {
+		statsSql := fmt.Sprintf(`
+			SELECT
+				AVG(duration_ms) as avg,
+				PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
+				PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY duration_ms) as p90,
+				PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) as p95,
+				PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms) as p99
+			FROM task_executions
+			%s
+		`, where)
+
+		var p50, p90, p95, p99 float64
+		if err := r.db.Pool.QueryRow(ctx, statsSql, args...).Scan(&avgMs, &p50, &p90, &p95, &p99); err != nil {
+			return nil, err
+		}
+		p50Ms = int64(p50)
+		p90Ms = int64(p90)
+		p95Ms = int64(p95)
+		p99Ms = int64(p99)
+	}
+
+	return &models.DurationHistogramData{
+		TaskType:   taskType,
+		TimeFrom:   timeFrom,
+		TimeTo:     timeTo,
+		TotalCount: totalCount,
+		Buckets:    histogramBuckets,
+		AvgMs:      avgMs,
+		P50Ms:      p50Ms,
+		P90Ms:      p90Ms,
+		P95Ms:      p95Ms,
+		P99Ms:      p99Ms,
+	}, nil
+}
+
+func int64Ptr(v int64) *int64 {
+	return &v
+}

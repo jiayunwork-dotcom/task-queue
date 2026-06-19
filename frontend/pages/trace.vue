@@ -29,6 +29,10 @@
         <TraceTabContent />
       </div>
 
+      <div v-show="activeTab === 'duration'" class="p-6">
+        <DurationAnalysisTabContent />
+      </div>
+
       <div v-show="activeTab === 'rules'" class="p-6">
         <AlertRulesTabContent @refresh="loadRules" />
       </div>
@@ -44,11 +48,13 @@
 import { ref, onMounted } from 'vue'
 import { useAlertHistory } from '~/composables/useApi'
 import TraceTabContent from './trace/TraceTabContent.vue'
+import DurationAnalysisTabContent from './trace/DurationAnalysisTabContent.vue'
 import AlertRulesTabContent from './trace/AlertRulesTabContent.vue'
 import AlertHistoryTabContent from './trace/AlertHistoryTabContent.vue'
 
 const tabs = [
   { value: 'trace', label: '链路追踪', icon: 'i-heroicons-eye-16-solid' },
+  { value: 'duration', label: '耗时分析', icon: 'i-heroicons-chart-bar-16-solid' },
   { value: 'rules', label: '告警规则', icon: 'i-heroicons-bell-16-solid' },
   { value: 'history', label: '告警历史', icon: 'i-heroicons-clock-16-solid' },
 ]

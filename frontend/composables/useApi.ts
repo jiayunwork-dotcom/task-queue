@@ -368,6 +368,57 @@ export function useQueueDepths() {
   return useApi<Record<string, number>>('/metrics/queue-depths')
 }
 
+export interface DurationHeatmapCell {
+  hour: number
+  date: string
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+  sample_size: number
+}
+
+export interface DurationHeatmapData {
+  task_type: string
+  dates: string[]
+  hours: number[]
+  matrix: (DurationHeatmapCell | null)[][]
+}
+
+export interface DurationHistogramBucket {
+  range: string
+  range_start_ms: number
+  range_end_ms?: number | null
+  count: number
+  percentage: number
+}
+
+export interface DurationHistogramData {
+  task_type: string
+  time_from: string
+  time_to: string
+  total_count: number
+  buckets: DurationHistogramBucket[]
+  avg_ms: number
+  p50_ms: number
+  p90_ms: number
+  p95_ms: number
+  p99_ms: number
+}
+
+export function useDurationHeatmap(params?: Record<string, any>) {
+  return useApi<DurationHeatmapData>('/metrics/duration-heatmap', {
+    query: params,
+    method: 'GET',
+  })
+}
+
+export function useDurationHistogram(params?: Record<string, any>) {
+  return useApi<DurationHistogramData>('/metrics/duration-histogram', {
+    query: params,
+    method: 'GET',
+  })
+}
+
 export function useRateLimitConfigs() {
   return useApi<Record<string, RateLimitConfig>>('/rate-limit/configs')
 }

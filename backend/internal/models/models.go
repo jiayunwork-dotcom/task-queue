@@ -358,3 +358,40 @@ type AlertHistory struct {
 	WebhookError         *string            `json:"webhook_error,omitempty" db:"webhook_error"`
 	TriggeredAt          time.Time          `json:"triggered_at" db:"triggered_at"`
 }
+
+type DurationHeatmapCell struct {
+	Hour       int     `json:"hour"`
+	Date       string  `json:"date"`
+	P50Ms      int64   `json:"p50_ms"`
+	P95Ms      int64   `json:"p95_ms"`
+	P99Ms      int64   `json:"p99_ms"`
+	SampleSize int64   `json:"sample_size"`
+}
+
+type DurationHeatmapData struct {
+	TaskType  string                 `json:"task_type"`
+	Dates     []string               `json:"dates"`
+	Hours     []int                  `json:"hours"`
+	Matrix    [][]*DurationHeatmapCell `json:"matrix"`
+}
+
+type DurationHistogramBucket struct {
+	Range      string  `json:"range"`
+	RangeStart int64   `json:"range_start_ms"`
+	RangeEnd   *int64  `json:"range_end_ms,omitempty"`
+	Count      int64   `json:"count"`
+	Percentage float64 `json:"percentage"`
+}
+
+type DurationHistogramData struct {
+	TaskType   string                   `json:"task_type"`
+	TimeFrom   time.Time                `json:"time_from"`
+	TimeTo     time.Time                `json:"time_to"`
+	TotalCount int64                    `json:"total_count"`
+	Buckets    []DurationHistogramBucket `json:"buckets"`
+	AvgMs      float64                  `json:"avg_ms"`
+	P50Ms      int64                    `json:"p50_ms"`
+	P90Ms      int64                    `json:"p90_ms"`
+	P95Ms      int64                    `json:"p95_ms"`
+	P99Ms      int64                    `json:"p99_ms"`
+}
