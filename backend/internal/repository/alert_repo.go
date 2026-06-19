@@ -81,7 +81,7 @@ func (r *AlertRepository) CreateRule(ctx context.Context, c *AlertRuleCreate) (*
 	_, err := r.db.Pool.Exec(ctx,
 		`INSERT INTO alert_rules (id, name, task_type, condition_type, threshold, window_minutes,
 			cooldown_seconds, notify_type, webhook_url, enabled, created_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		 VALUES ($1,$2,CAST($3 AS VARCHAR),$4,$5,$6,$7,$8,CAST($9 AS VARCHAR),$10,$11,$12)`,
 		rule.ID, rule.Name, taskTypeVal, rule.ConditionType, rule.Threshold,
 		rule.WindowMinutes, rule.CooldownSeconds, rule.NotifyType, webhookVal,
 		rule.Enabled, rule.CreatedAt, rule.UpdatedAt,
@@ -161,7 +161,7 @@ func (r *AlertRepository) ListEnabledRules(ctx context.Context) ([]models.AlertR
 func (r *AlertRepository) UpdateRule(ctx context.Context, id uuid.UUID, u *AlertRuleUpdate) (*models.AlertRule, error) {
 	sets := []string{"updated_at = NOW()"}
 	args := []interface{}{}
-	argIdx := 1
+	argIdx := 0
 
 	addSet := func(exprTemplate string, val interface{}) {
 		argIdx++
@@ -177,7 +177,7 @@ func (r *AlertRepository) UpdateRule(ctx context.Context, id uuid.UUID, u *Alert
 		if *u.TaskType != nil {
 			t = pgtype.Text{String: **u.TaskType, Valid: true}
 		}
-		addSet("task_type = $%d", t)
+		addSet("task_type = CAST($%d AS VARCHAR)", t)
 	}
 	if u.ConditionType != nil {
 		addSet("condition_type = $%d", string(*u.ConditionType))
@@ -199,7 +199,7 @@ func (r *AlertRepository) UpdateRule(ctx context.Context, id uuid.UUID, u *Alert
 		if *u.WebhookURL != nil {
 			t = pgtype.Text{String: **u.WebhookURL, Valid: true}
 		}
-		addSet("webhook_url = $%d", t)
+		addSet("webhook_url = CAST($%d AS VARCHAR)", t)
 	}
 	if u.Enabled != nil {
 		addSet("enabled = $%d", *u.Enabled)
@@ -258,7 +258,7 @@ func (r *AlertRepository) InsertHistory(ctx context.Context, h *models.AlertHist
 		`INSERT INTO alert_history (id, rule_id, rule_name, task_type, condition_type,
 			actual_value, threshold_value, comparison_description, webhook_url,
 			webhook_success, webhook_error, triggered_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		 VALUES ($1,$2,$3,CAST($4 AS VARCHAR),$5,$6,$7,$8,CAST($9 AS VARCHAR),$10,CAST($11 AS VARCHAR),$12)`,
 		h.ID, h.RuleID, h.RuleName, taskTypeVal, h.ConditionType,
 		h.ActualValue, h.ThresholdValue, h.ComparisonDescription, webhookVal,
 		h.WebhookSuccess, webhookErrVal, h.TriggeredAt,
