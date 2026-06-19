@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"task-queue/internal/alerts"
 	"task-queue/internal/api"
 	"task-queue/internal/audit"
 	"task-queue/internal/cache"
@@ -65,6 +66,7 @@ func main() {
 	auditRepo := repository.NewAuditRepository(db)
 	dagRepo := repository.NewDAGRepository(db)
 	traceRepo := repository.NewTraceRepository(db)
+	alertRepo := repository.NewAlertRepository(db)
 
 	traceLogger := tracing.NewLogger(traceRepo)
 	traceLogger.Start(ctx)
@@ -154,8 +156,11 @@ func main() {
 	})
 	reaper.Start(ctx)
 
+	alertDetector := alerts.NewDetector(alertRepo, db, nil)
+	alertDetector.Start(ctx)
+
 	server := api.NewServer(
-		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo, traceRepo,
+		cfg, taskRepo, workerRepo, handlerRepo, deadRepo, dagRepo, traceRepo, alertRepo,
 		auditLogger, scheduler, delayScheduler, workerManager, retryEngine, dagEngine, metricsColl,
 		rateLimitConfigMgr, rateLimiter, waitQueue)
 
@@ -188,6 +193,7 @@ func main() {
 	defer shutdownCancel()
 
 	reaper.Stop()
+	alertDetector.Stop()
 	rateLimiter.Stop()
 	rateLimitStats.Stop()
 	rateLimitConfigMgr.Stop()

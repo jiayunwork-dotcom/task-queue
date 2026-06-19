@@ -45,6 +45,7 @@ type Server struct {
 	deadRepo           *repository.DeadLetterRepository
 	dagRepo            *repository.DAGRepository
 	traceRepo          *repository.TraceRepository
+	alertRepo          *repository.AlertRepository
 	auditLog           *audit.Logger
 	scheduler          *queue.PriorityScheduler
 	delaySched         *queue.DelayScheduler
@@ -65,6 +66,7 @@ func NewServer(
 	deadRepo *repository.DeadLetterRepository,
 	dagRepo *repository.DAGRepository,
 	traceRepo *repository.TraceRepository,
+	alertRepo *repository.AlertRepository,
 	auditLog *audit.Logger,
 	scheduler *queue.PriorityScheduler,
 	delaySched *queue.DelayScheduler,
@@ -99,6 +101,7 @@ func NewServer(
 		deadRepo:           deadRepo,
 		dagRepo:            dagRepo,
 		traceRepo:          traceRepo,
+		alertRepo:          alertRepo,
 		auditLog:           auditLog,
 		scheduler:          scheduler,
 		delaySched:         delaySched,
@@ -171,6 +174,15 @@ func (s *Server) registerRoutes() {
 	trace.Get("", s.ListTraces)
 	trace.Get("/analysis/bottleneck", s.GetBottleneckAnalysis)
 	trace.Get("/:taskId", s.GetTraceDetail)
+
+	alerts := api.Group("/alerts")
+	alerts.Get("/rules", s.ListAlertRules)
+	alerts.Get("/rules/:id", s.GetAlertRule)
+	alerts.Post("/rules", s.CreateAlertRule)
+	alerts.Put("/rules/:id", s.UpdateAlertRule)
+	alerts.Delete("/rules/:id", s.DeleteAlertRule)
+	alerts.Patch("/rules/:id/toggle", s.ToggleAlertRule)
+	alerts.Get("/history", s.ListAlertHistory)
 
 	s.app.Get("/health", s.HealthCheck)
 }
@@ -1013,4 +1025,240 @@ func splitString(s, sep string) []string {
 func toJSON(v interface{}) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+type CreateAlertRuleRequest struct {
+	Name            string  `json:"name" validate:"required"`
+	TaskType        *string `json:"task_type"`
+	ConditionType   string  `json:"condition_type" validate:"required"`
+	Threshold       float64 `json:"threshold" validate:"required"`
+	WindowMinutes   int     `json:"window_minutes"`
+	CooldownMinutes int     `json:"cooldown_minutes"`
+	NotifyType      string  `json:"notify_type"`
+	WebhookURL      *string `json:"webhook_url"`
+	Enabled         *bool   `json:"enabled"`
+}
+
+func (s *Server) CreateAlertRule(c *fiber.Ctx) error {
+	var req CreateAlertRuleRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	if req.Name == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "name is required"})
+	}
+	if req.ConditionType == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "condition_type is required"})
+	}
+	if req.Threshold <= 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "threshold must be positive"})
+	}
+
+	condType := models.AlertConditionType(req.ConditionType)
+	switch condType {
+	case models.AlertConditionDurationP95, models.AlertConditionFailureRate, models.AlertConditionQueueBacklog:
+	default:
+		return c.Status(400).JSON(fiber.Map{"error": "invalid condition_type"})
+	}
+
+	notifyType := models.AlertNotifyWebhook
+	if req.NotifyType != "" {
+		notifyType = models.AlertNotifyType(req.NotifyType)
+		if notifyType != models.AlertNotifyWebhook {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid notify_type"})
+		}
+	}
+	if notifyType == models.AlertNotifyWebhook && (req.WebhookURL == nil || *req.WebhookURL == "") {
+		return c.Status(400).JSON(fiber.Map{"error": "webhook_url is required for webhook notification"})
+	}
+
+	window := req.WindowMinutes
+	if window <= 0 {
+		window = 5
+	}
+	cooldownSeconds := req.CooldownMinutes * 60
+	if cooldownSeconds <= 0 {
+		cooldownSeconds = 300
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	create := &repository.AlertRuleCreate{
+		Name:            req.Name,
+		TaskType:        req.TaskType,
+		ConditionType:   condType,
+		Threshold:       req.Threshold,
+		WindowMinutes:   window,
+		CooldownSeconds: cooldownSeconds,
+		NotifyType:      notifyType,
+		WebhookURL:      req.WebhookURL,
+		Enabled:         enabled,
+	}
+
+	rule, err := s.alertRepo.CreateRule(c.UserContext(), create)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	s.auditLog.Log("alert_rule", rule.ID, "created", audit.WithRemoteAddr(c.IP()))
+	return c.Status(201).JSON(rule)
+}
+
+func (s *Server) ListAlertRules(c *fiber.Ctx) error {
+	rules, err := s.alertRepo.ListRules(c.UserContext())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(rules)
+}
+
+func (s *Server) GetAlertRule(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	rule, err := s.alertRepo.GetRule(c.UserContext(), id)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "rule not found"})
+	}
+	return c.JSON(rule)
+}
+
+type UpdateAlertRuleRequest struct {
+	Name            *string `json:"name"`
+	TaskType        **string `json:"task_type"`
+	ConditionType   *string `json:"condition_type"`
+	Threshold       *float64 `json:"threshold"`
+	WindowMinutes   *int    `json:"window_minutes"`
+	CooldownMinutes *int    `json:"cooldown_minutes"`
+	NotifyType      *string `json:"notify_type"`
+	WebhookURL      **string `json:"webhook_url"`
+	Enabled         *bool   `json:"enabled"`
+}
+
+func (s *Server) UpdateAlertRule(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	var req UpdateAlertRuleRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	update := &repository.AlertRuleUpdate{
+		Name:      req.Name,
+		TaskType:  req.TaskType,
+		Threshold: req.Threshold,
+		Enabled:   req.Enabled,
+	}
+	if req.ConditionType != nil {
+		ct := models.AlertConditionType(*req.ConditionType)
+		switch ct {
+		case models.AlertConditionDurationP95, models.AlertConditionFailureRate, models.AlertConditionQueueBacklog:
+			update.ConditionType = &ct
+		default:
+			return c.Status(400).JSON(fiber.Map{"error": "invalid condition_type"})
+		}
+	}
+	if req.WindowMinutes != nil && *req.WindowMinutes > 0 {
+		update.WindowMinutes = req.WindowMinutes
+	}
+	if req.CooldownMinutes != nil && *req.CooldownMinutes > 0 {
+		cs := *req.CooldownMinutes * 60
+		update.CooldownSeconds = &cs
+	}
+	if req.NotifyType != nil {
+		nt := models.AlertNotifyType(*req.NotifyType)
+		if nt != models.AlertNotifyWebhook {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid notify_type"})
+		}
+		update.NotifyType = &nt
+	}
+	if req.WebhookURL != nil {
+		update.WebhookURL = req.WebhookURL
+	}
+
+	rule, err := s.alertRepo.UpdateRule(c.UserContext(), id, update)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	s.auditLog.Log("alert_rule", id, "updated", audit.WithRemoteAddr(c.IP()))
+	return c.JSON(rule)
+}
+
+func (s *Server) ToggleAlertRule(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	rule, err := s.alertRepo.GetRule(c.UserContext(), id)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "rule not found"})
+	}
+	newEnabled := !rule.Enabled
+	update := &repository.AlertRuleUpdate{Enabled: &newEnabled}
+	updated, err := s.alertRepo.UpdateRule(c.UserContext(), id, update)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	action := "disabled"
+	if newEnabled {
+		action = "enabled"
+	}
+	s.auditLog.Log("alert_rule", id, action, audit.WithRemoteAddr(c.IP()))
+	return c.JSON(updated)
+}
+
+func (s *Server) DeleteAlertRule(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+	}
+	if err := s.alertRepo.DeleteRule(c.UserContext(), id); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	s.auditLog.Log("alert_rule", id, "deleted", audit.WithRemoteAddr(c.IP()))
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+func (s *Server) ListAlertHistory(c *fiber.Ctx) error {
+	limit := c.QueryInt("limit", 50)
+	offset := c.QueryInt("offset", 0)
+	if limit > 500 {
+		limit = 500
+	}
+
+	filter := repository.AlertHistoryFilter{
+		Limit:    limit,
+		Offset:   offset,
+		RuleName: c.Query("rule_name", ""),
+	}
+	if from := c.Query("from"); from != "" {
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			filter.From = &t
+		}
+	}
+	if to := c.Query("to"); to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			filter.To = &t
+		}
+	}
+	if rid := c.Query("rule_id"); rid != "" {
+		if id, err := uuid.Parse(rid); err == nil {
+			filter.RuleID = &id
+		}
+	}
+
+	history, total, err := s.alertRepo.ListHistory(c.UserContext(), filter)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"items":  history,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }

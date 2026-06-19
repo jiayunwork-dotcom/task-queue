@@ -313,3 +313,48 @@ type StageStats struct {
 	AvgMs float64 `json:"avg_ms"`
 	Pct   float64 `json:"percent_of_total"`
 }
+
+type AlertConditionType string
+
+const (
+	AlertConditionDurationP95   AlertConditionType = "duration_p95"
+	AlertConditionFailureRate   AlertConditionType = "failure_rate"
+	AlertConditionQueueBacklog  AlertConditionType = "queue_backlog"
+)
+
+type AlertNotifyType string
+
+const (
+	AlertNotifyWebhook AlertNotifyType = "webhook"
+)
+
+type AlertRule struct {
+	ID               uuid.UUID          `json:"id" db:"id"`
+	Name             string             `json:"name" db:"name"`
+	TaskType         *string            `json:"task_type,omitempty" db:"task_type"`
+	ConditionType    AlertConditionType `json:"condition_type" db:"condition_type"`
+	Threshold        float64            `json:"threshold" db:"threshold"`
+	WindowMinutes    int                `json:"window_minutes" db:"window_minutes"`
+	CooldownSeconds  int                `json:"cooldown_seconds" db:"cooldown_seconds"`
+	NotifyType       AlertNotifyType    `json:"notify_type" db:"notify_type"`
+	WebhookURL       *string            `json:"webhook_url,omitempty" db:"webhook_url"`
+	Enabled          bool               `json:"enabled" db:"enabled"`
+	LastTriggeredAt  *time.Time         `json:"last_triggered_at,omitempty" db:"last_triggered_at"`
+	CreatedAt        time.Time          `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at" db:"updated_at"`
+}
+
+type AlertHistory struct {
+	ID                   uuid.UUID          `json:"id" db:"id"`
+	RuleID               uuid.UUID          `json:"rule_id" db:"rule_id"`
+	RuleName             string             `json:"rule_name" db:"rule_name"`
+	TaskType             *string            `json:"task_type,omitempty" db:"task_type"`
+	ConditionType        AlertConditionType `json:"condition_type" db:"condition_type"`
+	ActualValue          float64            `json:"actual_value" db:"actual_value"`
+	ThresholdValue       float64            `json:"threshold_value" db:"threshold_value"`
+	ComparisonDescription string            `json:"comparison_description" db:"comparison_description"`
+	WebhookURL           *string            `json:"webhook_url,omitempty" db:"webhook_url"`
+	WebhookSuccess       bool               `json:"webhook_success" db:"webhook_success"`
+	WebhookError         *string            `json:"webhook_error,omitempty" db:"webhook_error"`
+	TriggeredAt          time.Time          `json:"triggered_at" db:"triggered_at"`
+}

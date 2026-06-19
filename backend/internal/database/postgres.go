@@ -206,6 +206,42 @@ func (d *Database) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_occurred_at ON task_trace_events(occurred_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_type_status_time ON task_trace_events(task_type, occurred_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_trace_events_composite ON task_trace_events(occurred_at DESC, task_type) INCLUDE (task_id, to_status, from_status, trigger, worker_id, error)`,
+
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name VARCHAR(255) NOT NULL,
+			task_type VARCHAR(255),
+			condition_type VARCHAR(32) NOT NULL,
+			threshold DOUBLE PRECISION NOT NULL,
+			window_minutes INTEGER NOT NULL DEFAULT 5,
+			cooldown_seconds INTEGER NOT NULL DEFAULT 300,
+			notify_type VARCHAR(32) NOT NULL DEFAULT 'webhook',
+			webhook_url VARCHAR(1024),
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			last_triggered_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rules_task_type ON alert_rules(task_type)`,
+
+		`CREATE TABLE IF NOT EXISTS alert_history (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			rule_id UUID NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+			rule_name VARCHAR(255) NOT NULL,
+			task_type VARCHAR(255),
+			condition_type VARCHAR(32) NOT NULL,
+			actual_value DOUBLE PRECISION NOT NULL,
+			threshold_value DOUBLE PRECISION NOT NULL,
+			comparison_description TEXT NOT NULL,
+			webhook_url VARCHAR(1024),
+			webhook_success BOOLEAN NOT NULL DEFAULT false,
+			webhook_error TEXT,
+			triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_history_triggered_at ON alert_history(triggered_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_history_rule_id ON alert_history(rule_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_history_rule_time ON alert_history(rule_id, triggered_at DESC)`,
 	}
 
 	for _, stmt := range statements {

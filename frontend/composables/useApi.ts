@@ -502,3 +502,122 @@ export function useBottleneckAnalysis(params?: Record<string, any>) {
     method: 'GET',
   })
 }
+
+export type AlertConditionType = 'duration_p95' | 'failure_rate' | 'queue_backlog'
+export type AlertNotifyType = 'webhook'
+
+export interface AlertRule {
+  id: string
+  name: string
+  task_type?: string | null
+  condition_type: AlertConditionType
+  threshold: number
+  window_minutes: number
+  cooldown_seconds: number
+  notify_type: AlertNotifyType
+  webhook_url?: string | null
+  enabled: boolean
+  last_triggered_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertHistory {
+  id: string
+  rule_id: string
+  rule_name: string
+  task_type?: string | null
+  condition_type: AlertConditionType
+  actual_value: number
+  threshold_value: number
+  comparison_description: string
+  webhook_url?: string | null
+  webhook_success: boolean
+  webhook_error?: string | null
+  triggered_at: string
+}
+
+export function alertConditionLabel(t: AlertConditionType): string {
+  const map: Record<AlertConditionType, string> = {
+    duration_p95: 'P95耗时',
+    failure_rate: '失败率',
+    queue_backlog: '队列积压',
+  }
+  return map[t] || t
+}
+
+export function alertConditionColor(t: AlertConditionType): string {
+  const map: Record<AlertConditionType, string> = {
+    duration_p95: 'blue',
+    failure_rate: 'red',
+    queue_backlog: 'amber',
+  }
+  return map[t] || 'gray'
+}
+
+export function alertConditionUnit(t: AlertConditionType): string {
+  const map: Record<AlertConditionType, string> = {
+    duration_p95: 'ms',
+    failure_rate: '%',
+    queue_backlog: '个',
+  }
+  return map[t] || ''
+}
+
+export function formatAlertValue(t: AlertConditionType, v: number): string {
+  const unit = alertConditionUnit(t)
+  if (t === 'failure_rate') {
+    return `${v.toFixed(2)}${unit}`
+  }
+  if (t === 'duration_p95') {
+    return formatDuration(v)
+  }
+  return `${v}${unit}`
+}
+
+export function useAlertRules() {
+  return useApi<AlertRule[]>('/alerts/rules', {
+    method: 'GET',
+  })
+}
+
+export function useAlertHistory(params?: Record<string, any>) {
+  return useApi<any>('/alerts/history', {
+    query: params,
+    method: 'GET',
+  })
+}
+
+export async function createAlertRule(data: any) {
+  const config = useRuntimeConfig()
+  return await $fetch<AlertRule>('/alerts/rules', {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'POST',
+    body: data,
+  })
+}
+
+export async function updateAlertRule(id: string, data: any) {
+  const config = useRuntimeConfig()
+  return await $fetch<AlertRule>(`/alerts/rules/${id}`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'PUT',
+    body: data,
+  })
+}
+
+export async function toggleAlertRule(id: string) {
+  const config = useRuntimeConfig()
+  return await $fetch<AlertRule>(`/alerts/rules/${id}/toggle`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'PATCH',
+  })
+}
+
+export async function deleteAlertRule(id: string) {
+  const config = useRuntimeConfig()
+  return await $fetch(`/alerts/rules/${id}`, {
+    baseURL: config.public.apiBase || API_BASE,
+    method: 'DELETE',
+  })
+}
